@@ -24,6 +24,7 @@ class LDTDeVenySpectrograph(spectrograph.Spectrograph):
     name = 'ldt_deveny'
     telescope = telescopes.LDTTelescopePar()
     camera = 'DeVeny'
+    url = 'https://lowell.edu/research/telescopes-and-facilities/ldt/deveny-optical-spectrograph/'
     header_name = 'Deveny'
     comment = 'LDT DeVeny Optical Spectrograph'
     supported = True
@@ -217,6 +218,10 @@ class LDTDeVenySpectrograph(spectrograph.Spectrograph):
         par['calibrations']['bpm_usebias'] = True
 
         # Wavelength Calibration Parameters
+        # Do not sigmaclip the arc frames for better MasterArc and better wavecalib
+        par['calibrations']['arcframe']['process']['clip'] = False
+        # Do not sigmaclip the tilt frames
+        par['calibrations']['tiltframe']['process']['clip'] = False
         # Arc lamps list from header -- instead of defining the full list here
         par['calibrations']['wavelengths']['lamps'] = ['use_header']
         #par['calibrations']['wavelengths']['lamps'] = ['NeI', 'ArI', 'CdI', 'HgI']
@@ -557,6 +562,7 @@ class LDTDeVenySpectrograph(spectrograph.Spectrograph):
 
         # The spatial section is unchanged, but the spectral section flips
         #  Add 1 because the pixels are 1-indexed (FITS standard)
+        # TODO: Why does this need to be cast specifically as int32?
         y2p, y1p = nspecpix - np.int32(spec_sec.split(':')) + 1
 
         # Return the PypeIt-standard Numpy array

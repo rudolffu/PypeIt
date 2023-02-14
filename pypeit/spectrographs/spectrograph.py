@@ -27,6 +27,8 @@ provide instrument-specific:
 """
 
 from abc import ABCMeta
+import os
+from configobj import ConfigObj
 
 from IPython import embed
 
@@ -97,6 +99,11 @@ class Spectrograph:
     This is used by specdb, so use that naming convention
     """
 
+    url = None
+    """
+    Reference url
+    """
+
     header_name = None
     """
     Name of the spectrograph camera or arm from the Header.
@@ -109,12 +116,26 @@ class Spectrograph:
     spectrograph.
     """
 
+    ech_fixed_format = None
+    """
+    If an echelle spectrograph, this will be set to a boolean indicating whether it is a fixed format or tiltable 
+    echelle. 
+    """
+
     supported = False
     """
     Flag that ``PypeIt`` code base has been sufficiently tested with data
     from this spectrograph that it is officially supported by the development
     team.
     """
+
+    ql_supported = False
+    """
+    Flag that ``PypeIt`` code base has been sufficiently tested with data
+    from this spectrograph in quicklook mode
+    that it is officially supported by the development team.
+    """
+
 
     comment = None
     """
@@ -125,6 +146,11 @@ class Spectrograph:
     meta_data_model = meta.get_meta_data_model()
     """
     Metadata model that is generic to all spectrographs.
+    """
+
+    allowed_extensions = None
+    """
+    Defines the allowed extensions for the input fits files.
     """
 
     def __init__(self):
@@ -139,6 +165,8 @@ class Spectrograph:
         # Generate and check the instrument-specific metadata definition
         self.init_meta()
         self.validate_metadata()
+        if self.pypeline == 'Echelle' and self.ech_fixed_format is None:
+            msgs.error('ech_fixed_format must be set for echelle spectrographs')
 
         # TODO: Is there a better way to do this?
         # Validate the instance by checking that the class has defined the
@@ -197,6 +225,51 @@ class Spectrograph:
         """
 
         return par
+
+    def ql_par(self):
+        """ Generate a list of QL specific parameters 
+
+        The ones below are the default for any spectrograph.
+        They may be over-ridden by the specific spectrograph module
+
+        Returns:
+            list: List of QL specific parameters.  
+        """
+        # Calibration + misc
+        ql_cfg = ['[rdx]', 
+                  '    ignore_bad_headers = True',
+                        '[baseprocess]', 
+                            'use_biasimage = False', 
+                        '[calibrations]', 
+                        '    raise_chk_error = False',  # This allows for science frames only and "cooked" Masters
+                        '  [[flatfield]]', 
+                        '       saturated_slits = mask']
+        # Reduction parameters
+        ql_cfg += ['[scienceframe]',
+                        '    [[process]]',
+                        '        mask_cr = False',
+                        '[reduce]',
+                        '    [[extraction]]',
+                        '        skip_optimal = True',
+                        '    [[findobj]]',
+                        '        skip_second_find = True']
+        return ql_cfg
+
+
+    def _check_extensions(self, filename):
+        """
+        Check if this filename has an allowed extension
+
+        Args:
+            filename (:obj:`str`):
+                Input raw fits filename
+        """
+        if self.allowed_extensions is not None:
+            if os.path.splitext(filename)[1] not in self.allowed_extensions:
+                msgs.error("The input filename:"+msgs.newline()+
+                           filename+msgs.newline()+
+                           f"has the wrong extension. The allowed extensions for {self.name} include:"+msgs.newline()+
+                           ",".join(self.allowed_extensions))
 
     def _check_telescope(self):
         """Check the derived class has properly defined the telescope."""
@@ -606,6 +679,26 @@ class Spectrograph:
         """
         return ['dispname', 'dichroic', 'decker']
 
+    def modify_config(self, fitstbl, cfg):
+        """
+        Modify the configuration dictionary for a given frame. This method is used
+        in :func:`pypeit.metadata.PypeItMetaData.set_configurations` to modify in place
+        the configuration requirement to assign a specific frame to the current setup.
+
+        **This method is not defined for all spectrographs.**
+
+        Args:
+            fitstbl(`astropy.table.Table`_):
+                The table with the metadata for one frames.
+            cfg (:obj:`dict`):
+                dictionary with metadata associated to a specific configuration.
+
+        Returns:
+            :obj:`dict`: modified dictionary with metadata associated to a specific configuration.
+        """
+
+        return cfg
+
     def valid_configuration_values(self):
         """
         Return a fixed set of valid values for any/all of the configuration
@@ -624,7 +717,8 @@ class Spectrograph:
         if 'instrument' in meta_tbl.keys():
             # Check that there is only one instrument
             #  This could fail if one mixes is much older calibs
-            instr_names = np.unique(meta_tbl['instrument'].data)
+            indx = meta_tbl['instrument'].data != None
+            instr_names = np.unique(meta_tbl['instrument'].data[indx])
             if len(instr_names) != 1:
                 msgs.warn(f"More than one instrument in your dataset! {instr_names} \n"+
                 f"Proceed with great caution...")
@@ -660,6 +754,25 @@ class Spectrograph:
             group.
         """
         return {'bias': None, 'dark': None}
+
+    def get_comb_group(self, fitstbl):
+        """
+
+        This method is used in :func:`pypeit.metadata.PypeItMetaData.set_combination_groups`,
+        and modifies comb_id and bkg_id metas for a specific instrument.
+
+
+        **This method is not defined for all spectrographs.**
+
+        Args:
+            fitstbl(`astropy.table.Table`_):
+                The table with the metadata for all the frames.
+
+        Returns:
+            `astropy.table.Table`_: modified fitstbl.
+        """
+
+        return fitstbl
 
     def pypeit_file_keys(self):
         """
@@ -846,6 +959,16 @@ class Spectrograph:
 
         if isinstance(subset, str):
             _subset = parse.parse_slitspatnum(subset)[0].tolist()
+            # Convert detector to int/tuple
+            new_dets = []
+            for item in _subset:
+                if 'DET' in item:
+                    idx = np.where(self.list_detectors() == item)[0][0]
+                    new_dets.append(idx+1)
+                elif 'MSC' in item:
+                    idx = np.where(self.list_detectors(mosaic=True) == item)[0][0]
+                    new_dets.append(self.allowed_mosaics[idx])
+            _subset = new_dets
         elif isinstance(subset, (int, tuple)):
             _subset = [subset]
         else:
@@ -941,7 +1064,8 @@ class Spectrograph:
             pixel. Pixels unassociated with any amplifier are set to 0.  Shape
             is identical to ``raw_img``.
         """
-        # Open
+        # Check extension and then open
+        self._check_extensions(raw_file)
         hdu = io.fits_open(raw_file)
 
         # Validate the entered (list of) detector(s)
@@ -1345,6 +1469,7 @@ class Spectrograph:
         # Faster to open the whole file and then assign the headers,
         # particularly for gzipped files (e.g., DEIMOS)
         if isinstance(inp, str):
+            self._check_extensions(inp)
             try:
                 hdu = io.fits_open(inp)
             except:

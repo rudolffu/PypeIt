@@ -31,7 +31,9 @@ class DataCube(datamodel.DataContainer):
     """
     DataContainer to hold the products of a datacube
 
-    See the datamodel for argument descriptions
+    The datamodel attributes are:
+
+    .. include:: ../include/class_datamodel_datacube.rst
 
     Args:
         flux (`numpy.ndarray`_):
@@ -764,7 +766,7 @@ def make_whitelight_fromref(all_ra, all_dec, all_wave, all_sci, all_wghts, all_i
 
 
 def make_whitelight_frompixels(all_ra, all_dec, all_wave, all_sci, all_wghts, all_idx, dspat,
-                               all_ivar=None, whitelightWCS=None, numra=None, numdec=None):
+                               all_ivar=None, whitelightWCS=None, numra=None, numdec=None, trim=1):
     """ Generate a whitelight image using the individual pixels of every input frame
 
     Args:
@@ -786,8 +788,8 @@ def make_whitelight_frompixels(all_ra, all_dec, all_wave, all_sci, all_wghts, al
         dspat (float):
             The size of each spaxel on the sky (in degrees)
         all_ivar (`numpy.ndarray`_, optional):
-            Inverse variance of each pixel from all spec2d files. If provided,
-            inverse variance images will be calculated and return for each white light image.
+            1D flattened array containing of the inverse variance of each pixel from all spec2d files.
+            If provided, inverse variance images will be calculated and returned for each white light image.
         whitelightWCS (`astropy.wcs.wcs.WCS`_, optional):
             The WCS of a reference white light image. If supplied, you must also
             supply numra and numdec.
@@ -795,6 +797,8 @@ def make_whitelight_frompixels(all_ra, all_dec, all_wave, all_sci, all_wghts, al
             Number of RA spaxels in the reference white light image
         numdec (int, optional):
             Number of DEC spaxels in the reference white light image
+        trim (int, optional):
+            Number of pixels to grow around a masked region
 
     Returns:
         tuple : two 3D arrays will be returned, each of shape [N, M, numfiles],
@@ -813,14 +817,13 @@ def make_whitelight_frompixels(all_ra, all_dec, all_wave, all_sci, all_wghts, al
 
         # Generate coordinates
         cosdec = np.cos(np.mean(all_dec) * np.pi / 180.0)
-        numra = int((np.max(all_ra) - np.min(all_ra)) * cosdec / dspat)
-        numdec = int((np.max(all_dec) - np.min(all_dec)) / dspat)
+        numra = 1+int((np.max(all_ra) - np.min(all_ra)) * cosdec / dspat)
+        numdec = 1+int((np.max(all_dec) - np.min(all_dec)) / dspat)
     else:
         # If a WCS is supplied, the numra and numdec must be specified
         if (numra is None) or (numdec is None):
             msgs.error("A WCS has been supplied to make_whitelight." + msgs.newline() +
                        "numra and numdec must also be specified")
-
     xbins = np.arange(1 + numra) - 1
     ybins = np.arange(1 + numdec) - 1
     spec_bins = np.arange(2) - 1
@@ -828,7 +831,6 @@ def make_whitelight_frompixels(all_ra, all_dec, all_wave, all_sci, all_wghts, al
 
     whitelight_Imgs = np.zeros((numra, numdec, numfiles))
     whitelight_ivar = np.zeros((numra, numdec, numfiles))
-    trim = 3
     for ff in range(numfiles):
         msgs.info("Generating white light image of frame {0:d}/{1:d}".format(ff + 1, numfiles))
         ww = (all_idx == ff)
@@ -839,8 +841,6 @@ def make_whitelight_frompixels(all_ra, all_dec, all_wave, all_sci, all_wghts, al
         nrmCube = (norm > 0) / (norm + (norm == 0))
         whtlght = (wlcube * nrmCube)[:, :, 0]
         # Create a mask of good pixels (trim the edges)
-#        gpm = grow_masked(whtlght == 0, trim, 1) == 0  # A good pixel = 1
-        # TODO: NEED TO CHECK THIS IS OKAY!!
         gpm = grow_mask(whtlght == 0, trim) == 0  # A good pixel = 1
         whtlght *= gpm
         # Set the masked regions to the minimum value
@@ -1126,6 +1126,7 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
         parset = spec.default_pypeit_par()
     cubepar = parset['reduce']['cube']
     flatpar = parset['calibrations']['flatfield']
+    senspar = parset['sensfunc']
 
     # Get the detector number and string representation
     det = 1 if parset['rdx']['detnum'] is None else parset['rdx']['detnum']
@@ -1167,7 +1168,6 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
     blaze_spline, flux_spline = None, None
     if cubepar['standard_cube'] is not None:
         fluxcal = True
-        senspar = parset['sensfunc']
         ss_file = cubepar['standard_cube']
         if not os.path.exists(ss_file):
             msgs.error("Standard cube does not exist:" + msgs.newline() + ss_file)
@@ -1222,6 +1222,7 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
     dspat = None if cubepar['spatial_delta'] is None else cubepar['spatial_delta']/3600.0  # binning size on the sky (/3600 to convert to degrees)
     dwv = cubepar['wave_delta']       # binning size in wavelength direction (in Angstroms)
     wave_ref = None
+    mnmx_wv = None  # Will be used to store the minimum and maximum wavelengths of every slit and frame.
     weights = np.ones(numfiles)  # Weights to use when combining cubes
     locations = parset['calibrations']['alignment']['locations']
     flat_splines = dict()   # A dictionary containing the splines of the flatfield
@@ -1238,6 +1239,26 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
                       "scale correction will not be performed unless you have specified the correct " +
                       "scale_corr file in the spec2d block")
             cubepar['scale_corr'] = None
+    # Load the default sky frame to be used for sky subtraction
+    skysub_default = "image"
+    skysubImgDef = None  # This is the default behaviour (i.e. to use the "image" for the sky subtraction)
+
+    if cubepar['skysub_frame'] in [None, 'none', '', 'None']:
+        skysub_default = "none"
+        skysubImgDef = np.array([0.0])  # Do not perform sky subtraction
+    elif cubepar['skysub_frame'].lower() == "image":
+        skysub_default = "image"
+    else:
+        msgs.info("Loading default image for sky subtraction:" +
+                  msgs.newline() + cubepar['skysub_frame'])
+        try:
+            spec2DObj = spec2dobj.Spec2DObj.from_file(cubepar['skysub_frame'], detname)
+            skysub_exptime = fits.open(cubepar['skysub_frame'])[0].header['EXPTIME']
+        except:
+            msgs.error("Could not load skysub image from spec2d file:" + msgs.newline() + cubepar['skysub_frame'])
+        skysub_default = cubepar['skysub_frame']
+        skysubImgDef = spec2DObj.skymodel/skysub_exptime  # Sky counts/second
+
     # Load all spec2d files and prepare the data for making a datacube
     for ff, fil in enumerate(files):
         # Load it up
@@ -1257,9 +1278,9 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
         # Try to load the relative scale image, if something other than the default has been provided
         relScaleImg = relScaleImgDef.copy()
         if opts['scale_corr'][ff] is not None:
+            msgs.info("Loading relative scale image:" + msgs.newline() + opts['scale_corr'][ff])
+            spec2DObj_scl = spec2dobj.Spec2DObj.from_file(opts['scale_corr'][ff], detname)
             try:
-                msgs.info("Loading relative scale image:"+msgs.newline()+opts['scale_corr'][ff])
-                spec2DObj_scl = spec2dobj.Spec2DObj.from_file(opts['scale_corr'][ff], detname)
                 relScaleImg = spec2DObj_scl.scaleimg
             except:
                 msgs.warn("Could not load scaleimg from spec2d file:" + msgs.newline() + opts['scale_corr'][ff])
@@ -1269,9 +1290,47 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
                     msgs.warn("Scale correction will not be performed")
                 relScaleImg = relScaleImgDef.copy()
 
+        # Set the default behaviour if a global skysub frame has been specified
+        this_skysub = skysub_default
+        if skysub_default == "image":
+            skysubImg = spec2DObj.skymodel
+        else:
+            skysubImg = skysubImgDef.copy() * exptime
+        # See if there's any changes from the default behaviour
+        if opts['skysub_frame'][ff] is not None:
+            if opts['skysub_frame'][ff].lower() == 'default':
+                if skysub_default == "image":
+                    skysubImg = spec2DObj.skymodel
+                    this_skysub = "image"  # Use the current spec2d for sky subtraction
+                else:
+                    skysubImg = skysubImgDef.copy() * exptime
+                    this_skysub = skysub_default  # Use the global value for sky subtraction
+            elif opts['skysub_frame'][ff].lower() == 'image':
+                skysubImg = spec2DObj.skymodel
+                this_skysub = "image"  # Use the current spec2d for sky subtraction
+            elif opts['skysub_frame'][ff].lower() == 'none':
+                skysubImg = np.array([0.0])
+                this_skysub = "none"  # Don't do sky subtraction
+            else:
+                # Load a user specified frame for sky subtraction
+                msgs.info("Loading skysub frame:" + msgs.newline() + opts['skysub_frame'][ff])
+                try:
+                    spec2DObj_sky = spec2dobj.Spec2DObj.from_file(opts['skysub_frame'][ff], detname)
+                    skysub_exptime = fits.open(opts['skysub_frame'][ff])[0].header['EXPTIME']
+                except:
+                    msgs.error("Could not load skysub image from spec2d file:" + msgs.newline() + opts['skysub_frame'][ff])
+                skysubImg = spec2DObj_sky.skymodel * exptime / skysub_exptime  # Sky counts
+                this_skysub = opts['skysub_frame'][ff]  # User specified spec2d for sky subtraction
+        if this_skysub == "none":
+            msgs.info("Sky subtraction will not be performed.")
+        else:
+            msgs.info("Using the following frame for sky subtraction:"+msgs.newline()+this_skysub)
+
         # Extract the information
-        relscl = spec2DObj.scaleimg/relScaleImg
-        sciimg = (spec2DObj.sciimg-spec2DObj.skymodel)*relscl  # Subtract sky
+        relscl = 1.0
+        if cubepar['scale_corr'] is not None or opts['scale_corr'][ff] is not None:
+            relscl = spec2DObj.scaleimg/relScaleImg
+        sciimg = (spec2DObj.sciimg-skysubImg)*relscl  # Subtract sky
         ivar = spec2DObj.ivarraw / relscl**2
         waveimg = spec2DObj.waveimg
         bpmmask = spec2DObj.bpmmask
@@ -1300,11 +1359,23 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
         msgs.info("Constructing slit image")
         slitid_img_init = slits.slit_img(pad=0, initial=True, flexure=flexure)
 
+        # Obtain the minimum and maximum wavelength of all slits
+        if mnmx_wv is None:
+            mnmx_wv = np.zeros((1, slits.nslits, 2))
+        else:
+            mnmx_wv = np.append(mnmx_wv, np.zeros((1, slits.nslits, 2)), axis=0)
+        for slit_idx, slit_spat in enumerate(slits.spat_id):
+            onslit_init = (slitid_img_init == slit_spat)
+            mnmx_wv[ff, slit_idx, 0] = np.min(waveimg[onslit_init])
+            mnmx_wv[ff, slit_idx, 1] = np.max(waveimg[onslit_init])
+
         # Remove edges of the spectrum where the sky model is bad
         sky_is_good = make_good_skymask(slitid_img_init, spec2DObj.tilts)
 
         # Construct a good pixel mask
-        onslit_gpm = (slitid_img_init > 0) & (bpmmask == 0) & sky_is_good
+        # TODO: This should use the mask function to figure out which elements
+        # are masked.
+        onslit_gpm = (slitid_img_init > 0) & (bpmmask.mask == 0) & sky_is_good
 
         # Grab the WCS of this frame
         frame_wcs = spec.get_wcs(spec2DObj.head0, slits, detector.platescale, wave0, dwv)
@@ -1317,17 +1388,18 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
         if dspat is None:
             dspat = max(pxscl, slscl)
         if pxscl > dspat:
-            msgs.warn("Spatial scale requested ({0:f}'') is less than the pixel scale ({1:f}'')".format(dspat,pxscl))
-        if pxscl > dspat:
-            msgs.warn("Spatial scale requested ({0:f}'') is less than the slicer scale ({1:f}'')".format(dspat, slscl))
+            msgs.warn("Spatial scale requested ({0:f} arcsec) is less than the pixel scale ({1:f} arcsec)".format(3600.0*dspat, 3600.0*pxscl))
+        if slscl > dspat:
+            msgs.warn("Spatial scale requested ({0:f} arcsec) is less than the slicer scale ({1:f} arcsec)".format(3600.0*dspat, 3600.0*slscl))
 
         # Loading the alignments frame for these data
         astrometric = cubepar['astrometric']
-        msgs.info("Loading alignments")
-        alignfile = masterframe.construct_file_name(alignframe.Alignments, hdr['TRACMKEY'], master_dir=hdr['PYPMFDIR'])
         alignments = None
-        if cubepar['astrometric']:
+        if astrometric:
+            alignfile = masterframe.construct_file_name(alignframe.Alignments, hdr['TRACMKEY'],
+                                                        master_dir=hdr['PYPMFDIR'])
             if os.path.exists(alignfile) and cubepar['astrometric']:
+                msgs.info("Loading alignments")
                 alignments = alignframe.Alignments.from_file(alignfile)
             else:
                 msgs.warn("Could not find Master Alignment frame:"+msgs.newline()+alignfile)
@@ -1378,7 +1450,7 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
             msgs.info("Calculating relative sensitivity for grating correction")
             flatimages = flatfield.FlatImages.from_file(flatfile)
             flatframe = flatimages.illumflat_raw/flatimages.fit2illumflat(slits, frametype='illum', initial=True,
-                                                                          flexure_shift=flexure)
+                                                                          spat_flexure=flexure)
             # Calculate the relative scale
             scale_model = flatfield.illum_profile_spectral(flatframe, waveimg, slits,
                                                            slit_illum_ref_idx=flatpar['slit_illum_ref_idx'], model=None,
@@ -1389,7 +1461,7 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
             wavebins = np.linspace(np.min(waveimg[onslit]), np.max(waveimg[onslit]), slits.nspec)
             hist, edge = np.histogram(waveimg[onslit], bins=wavebins, weights=flatframe[onslit]/scale_model[onslit])
             cntr, edge = np.histogram(waveimg[onslit], bins=wavebins)
-            cntr = cntr.astype(np.float)
+            cntr = cntr.astype(float)
             norm = (cntr != 0) / (cntr + (cntr == 0))
             spec_spl = hist * norm
             wave_spl = 0.5 * (wavebins[1:] + wavebins[:-1])
@@ -1408,7 +1480,7 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
         longitude = spec.telescope['longitude']
         latitude = spec.telescope['latitude']
         airmass = spec2DObj.head0[spec.meta['airmass']['card']]
-        extinct = load_extinction_data(longitude, latitude)
+        extinct = load_extinction_data(longitude, latitude, senspar['UVIS']['extinct_file'])
         # extinction_correction requires the wavelength is sorted
         wvsrt = np.argsort(wave_ext)
         ext_corr = extinction_correction(wave_ext[wvsrt] * units.AA, airmass, extinct)
@@ -1429,7 +1501,10 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
         ivar_sav = ivar_ext[wvsrt] / ext_corr ** 2
 
         # Convert units to Counts/s/Ang/arcsec2
-        scl_units = dwav_ext[wvsrt] * 3600.0 * 3600.0 * (frame_wcs.wcs.cdelt[0] * frame_wcs.wcs.cdelt[1])
+        # Slicer sampling * spatial pixel sampling
+        sl_deg = np.sqrt(frame_wcs.wcs.cd[0, 0] ** 2 + frame_wcs.wcs.cd[1, 0] ** 2)
+        px_deg = np.sqrt(frame_wcs.wcs.cd[1, 1] ** 2 + frame_wcs.wcs.cd[0, 1] ** 2)
+        scl_units = dwav_ext[wvsrt] * (3600.0 * sl_deg) * (3600.0 * px_deg)
         flux_sav /= scl_units
         ivar_sav *= scl_units ** 2
 
@@ -1485,38 +1560,54 @@ def coadd_cube(files, opts, spectrograph=None, parset=None, overwrite=False):
 
     # Register spatial offsets between all frames
     # Check if a reference whitelight image should be used to register the offsets
-    if cubepar["reference_image"] is None:
-        # Generate white light images
-        whitelight_imgs, _, _ = make_whitelight_frompixels(all_ra, all_dec, all_wave, all_sci, all_wghts, all_idx, dspat)
-        # ref_idx will be the index of the cube with the highest S/N
-        ref_idx = np.argmax(weights)
-        reference_image = whitelight_imgs[:, :, ref_idx].copy()
-        msgs.info("Calculating spatial translation of each cube relative to cube #{0:d})".format(ref_idx+1))
-    else:
-        ref_idx = -1  # Don't use an index
-        # Load reference information
-        reference_image, whitelight_imgs, wlwcs = \
-            make_whitelight_fromref(all_ra, all_dec, all_wave, all_sci, all_wghts, all_idx, dspat,
-                                    cubepar['reference_image'])
-        msgs.info("Calculating the spatial translation of each cube relative to user-defined 'reference_image'")
-
-    # Calculate the image offsets - check the reference is a zero shift
-    for ff in range(numfiles):
-        # Calculate the shift
-        ra_shift, dec_shift = calculate_image_phase(reference_image.copy(), whitelight_imgs[:, :, ff], maskval=0.0)
-        # Convert pixel shift to degress shift
-        ra_shift *= dspat/cosdec
-        dec_shift *= dspat
-        msgs.info("Spatial shift of cube #{0:d}: RA, DEC (arcsec) = {1:+0.3f}, {2:+0.3f}".format(ff+1, ra_shift*3600.0, dec_shift*3600.0))
-        # Apply the shift
-        all_ra[all_idx == ff] += ra_shift
-        all_dec[all_idx == ff] += dec_shift
-
+    numiter=2
+    for dd in range(numiter):
+        msgs.info(f"Iterating on spatial translation - ITERATION #{dd+1}/{numiter}")
+        if cubepar["reference_image"] is None:
+            # Find the wavelength range where all frames overlap
+            min_wl, max_wl = np.max(mnmx_wv[:,:,0]), np.min(mnmx_wv[:,:,1])  # This is the max blue wavelength and the min red wavelength
+            # Generate white light images
+            if min_wl < max_wl:
+                ww = np.where((all_wave > min_wl) & (all_wave < max_wl))
+            else:
+                msgs.warn("Datacubes do not completely overlap in wavelength. Offsets may be unreliable...")
+                ww = np.where((all_wave > 0) & (all_wave < 99999999))
+            whitelight_imgs, _, _ = make_whitelight_frompixels(all_ra[ww], all_dec[ww], all_wave[ww], all_sci[ww], all_wghts[ww], all_idx[ww], dspat)
+            # ref_idx will be the index of the cube with the highest S/N
+            ref_idx = np.argmax(weights)
+            reference_image = whitelight_imgs[:, :, ref_idx].copy()
+            msgs.info("Calculating spatial translation of each cube relative to cube #{0:d})".format(ref_idx+1))
+        else:
+            ref_idx = -1  # Don't use an index
+            # Load reference information
+            reference_image, whitelight_imgs, wlwcs = \
+                make_whitelight_fromref(all_ra, all_dec, all_wave, all_sci, all_wghts, all_idx, dspat,
+                                        cubepar['reference_image'])
+            msgs.info("Calculating the spatial translation of each cube relative to user-defined 'reference_image'")
+        # Calculate the image offsets - check the reference is a zero shift
+        for ff in range(numfiles):
+            # Calculate the shift
+            ra_shift, dec_shift = calculate_image_phase(reference_image.copy(), whitelight_imgs[:, :, ff], maskval=0.0)
+            # Convert pixel shift to degress shift
+            ra_shift *= dspat/cosdec
+            dec_shift *= dspat
+            msgs.info("Spatial shift of cube #{0:d}: RA, DEC (arcsec) = {1:+0.3f}, {2:+0.3f}".format(ff+1, ra_shift*3600.0, dec_shift*3600.0))
+            # Apply the shift
+            all_ra[all_idx == ff] += ra_shift
+            all_dec[all_idx == ff] += dec_shift
     # Generate a white light image of *all* data
     msgs.info("Generating global white light image")
     if cubepar["reference_image"] is None:
-        whitelight_img, _, wlwcs = make_whitelight_frompixels(all_ra, all_dec, all_wave, all_sci, all_wghts,
-                                                              np.zeros(all_ra.size), dspat)
+        # Find the wavelength range where all frames overlap
+        min_wl, max_wl = np.max(mnmx_wv[:, :, 0]), np.min(mnmx_wv[:, :, 1])  # This is the max blue wavelength and the min red wavelength
+        if min_wl < max_wl:
+            ww = np.where((all_wave > min_wl) & (all_wave < max_wl))
+            msgs.info("Whitelight image covers the wavelength range {0:.2f} A - {1:.2f} A".format(min_wl, max_wl))
+        else:
+            msgs.warn("Datacubes do not completely overlap in wavelength. Offsets may be unreliable...")
+            ww = np.where((all_wave > 0) & (all_wave < 99999999))
+        whitelight_img, _, wlwcs = make_whitelight_frompixels(all_ra[ww], all_dec[ww], all_wave[ww], all_sci[ww],
+                                                              all_wghts[ww], np.zeros(ww[0].size), dspat)
     else:
         _, whitelight_img, wlwcs = \
             make_whitelight_fromref(all_ra, all_dec, all_wave, all_sci, all_wghts, np.zeros(all_ra.size),
