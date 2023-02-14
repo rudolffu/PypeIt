@@ -170,3 +170,10 @@ class LDTTelescopePar(TelescopePar):
                                               diameter=4.3,
                                               eff_aperture=12.85)
 
+class XLTTelescopePar(TelescopePar):
+    def __init__(self):
+        super(XLTTelescopePar, self).__init__(name='XLT',
+                                              longitude=117.5772,
+                                              latitude=40.39583,
+                                              elevation=900.0,
+                                              diameter=2.16)
