@@ -242,10 +242,14 @@ def interp_telluric_grid(theta, tell_dict):
     hg = tell_dict['h2o_grid']
     ag = tell_dict['airmass_grid']
     p, t, h, a = theta
-    pi = int(np.round((p-pg[0])/(pg[1]-pg[0]))) if len(pg) > 1 else 0
-    ti = int(np.round((t-tg[0])/(tg[1]-tg[0]))) if len(tg) > 1 else 0
-    hi = int(np.round((h-hg[0])/(hg[1]-hg[0]))) if len(hg) > 1 else 0
-    ai = int(np.round((a-ag[0])/(ag[1]-ag[0]))) if len(ag) > 1 else 0
+    pi = np.round((p-pg[0])/(pg[1]-pg[0])) if len(pg) > 1 else 0
+    ti = np.round((t-tg[0])/(tg[1]-tg[0])) if len(tg) > 1 else 0
+    hi = np.round((h-hg[0])/(hg[1]-hg[0])) if len(hg) > 1 else 0
+    ai = np.round((a-ag[0])/(ag[1]-ag[0])) if len(ag) > 1 else 0
+    pi = int(pi) if np.isnan(pi)==False else 0
+    ti = int(ti) if np.isnan(ti)==False else 0
+    hi = int(hi) if np.isnan(hi)==False else 0
+    ai = int(ai) if np.isnan(ai)==False else 0
     return tell_dict['tell_grid'][pi,ti,hi,ai]
 
 
