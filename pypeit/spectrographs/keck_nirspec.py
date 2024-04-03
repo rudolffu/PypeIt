@@ -45,7 +45,7 @@ class KeckNIRSPECSpectrograph(spectrograph.Spectrograph):
             specflip        = False,
             spatflip        = False,
             platescale      = 0.193,
-            darkcurr        = 0.8,
+            darkcurr        = 2520.0,  # e-/pixel/hour  (=0.7 e-/pixel/s)
             saturation      = 100000.,
             nonlinear       = 1.00,  # docs say linear to 90,000 but our flats are usually higher
             numamplifiers   = 1,
@@ -64,15 +64,15 @@ class KeckNIRSPECSpectrograph(spectrograph.Spectrograph):
         
         Returns:
             :class:`~pypeit.par.pypeitpar.PypeItPar`: Parameters required by
-            all of ``PypeIt`` methods.
+            all of PypeIt methods.
         """
         par = super().default_pypeit_par()
 
         # Wavelengths
         # 1D wavelength solution
-        par['calibrations']['wavelengths']['rms_threshold'] = 0.20 #0.20  # Might be grating dependent..
+        par['calibrations']['wavelengths']['rms_thresh_frac_fwhm'] = 0.06 #0.20  # Might be grating dependent..
         par['calibrations']['wavelengths']['sigdetect']=5.0
-        par['calibrations']['wavelengths']['fwhm']= 5.0
+        par['calibrations']['wavelengths']['fwhm']= 3.5
         par['calibrations']['wavelengths']['n_final']= 4
         par['calibrations']['wavelengths']['lamps'] = ['OH_NIRES']
         #par['calibrations']['wavelengths']['nonlinear_counts'] = self.detector[0]['nonlinear'] * self.detector[0]['saturation']
@@ -129,14 +129,19 @@ class KeckNIRSPECSpectrograph(spectrograph.Spectrograph):
         # Sensitivity function parameters
         par['sensfunc']['algorithm'] = 'IR'
         par['sensfunc']['polyorder'] = 8
-        par['sensfunc']['IR']['telgridfile'] = 'TelFit_MaunaKea_3100_26100_R20000.fits'
+        par['sensfunc']['IR']['telgridfile'] = 'TellPCA_3000_26000_R25000.fits'
+        par['sensfunc']['IR']['pix_shift_bounds'] = (-8.0,8.0)
+        
+        # Telluric parameters
+        par['telluric']['pix_shift_bounds'] = (-8.0,8.0)
+        
         return par
 
     def init_meta(self):
         """
         Define how metadata are derived from the spectrograph files.
 
-        That is, this associates the ``PypeIt``-specific metadata keywords
+        That is, this associates the PypeIt-specific metadata keywords
         with the instrument-specific header cards using :attr:`meta`.
         """
         self.meta = {}
@@ -176,9 +181,29 @@ class KeckNIRSPECSpectrograph(spectrograph.Spectrograph):
         """
         return ['decker', 'dispname']
 
+    def raw_header_cards(self):
+        """
+        Return additional raw header cards to be propagated in
+        downstream output files for configuration identification.
+
+        The list of raw data FITS keywords should be those used to populate
+        the :meth:`~pypeit.spectrographs.spectrograph.Spectrograph.configuration_keys`
+        or are used in :meth:`~pypeit.spectrographs.spectrograph.Spectrograph.config_specific_par`
+        for a particular spectrograph, if different from the name of the
+        PypeIt metadata keyword.
+
+        This list is used by :meth:`~pypeit.spectrographs.spectrograph.Spectrograph.subheader_for_spec`
+        to include additional FITS keywords in downstream output files.
+
+        Returns:
+            :obj:`list`: List of keywords from the raw data files that should
+            be propagated in output files.
+        """
+        return ['SLITNAME', 'DISPERS']
+
     def pypeit_file_keys(self):
         """
-        Define the list of keys to be output into a standard ``PypeIt`` file.
+        Define the list of keys to be output into a standard PypeIt file.
 
         Returns:
             :obj:`list`: The list of keywords in the relevant
@@ -188,7 +213,7 @@ class KeckNIRSPECSpectrograph(spectrograph.Spectrograph):
         pypeit_keys = super().pypeit_file_keys()
         # TODO: Why are these added here? See
         # pypeit.metadata.PypeItMetaData.set_pypeit_cols
-        pypeit_keys += ['calib', 'comb_id', 'bkg_id']
+        pypeit_keys += ['comb_id', 'bkg_id']
         return pypeit_keys
 
     def check_frame_type(self, ftype, fitstbl, exprng=None):
@@ -294,7 +319,7 @@ class KeckNIRSPECSpectrograph(spectrograph.Spectrograph):
                 Required if filename is None
                 Ignored if filename is not None
             msbias (`numpy.ndarray`_, optional):
-                Master bias frame used to identify bad pixels
+                Processed bias frame used to identify bad pixels
 
         Returns:
             `numpy.ndarray`_: An integer array with a masked value set

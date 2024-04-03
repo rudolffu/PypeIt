@@ -56,8 +56,8 @@ clean:
 	rm -rf $(LOCALFILES)
 
 apirst:
-	SPHINX_APIDOC_OPTIONS=$(SPHINXAPIOPT) $(SPHINXAPI) --separate -o ./api ../pypeit ../pypeit/tests/* ../pypeit/deprecated/* ../pypeit/version.py ../pypeit/compiler_version*
-	wget -O ./include/dev_suite_readme.rst https://raw.githubusercontent.com/pypeit/PypeIt-development-suite/master/README.rst
+	SPHINX_APIDOC_OPTIONS=$(SPHINXAPIOPT) $(SPHINXAPI) --separate -o ./api ../pypeit ../pypeit/tests/* ../pypeit/version.py ../pypeit/compiler_version*
+	wget -O ./include/dev_suite_readme.rst https://raw.githubusercontent.com/pypeit/PypeIt-development-suite/main/README.rst
 	python ./scripts/build_datacontainer_datamodels.py
 	python ./scripts/build_dependency_rst.py
 	python ./scripts/build_detector_table.py
@@ -84,7 +84,7 @@ htmlonly:
 
 picky:
 	make apirst
-	$(SPHINXBUILD) -b html $(ALLSPHINXOPTS) -n $(BUILDDIR)/html
+	$(SPHINXBUILD) -b html $(ALLSPHINXOPTS) -n -vvv -T $(BUILDDIR)/html -W
 	@echo
 	@echo "Build finished. The HTML pages are in $(BUILDDIR)/html."
 

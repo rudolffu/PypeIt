@@ -40,6 +40,7 @@ def init_dict():
     return dict(sciimg = sciimg,
                 ivarraw = 0.1 * np.ones_like(sciimg),
                 skymodel = 0.95 * np.ones_like(sciimg),
+                bkg_redux_skymodel=None,
                 objmodel = np.ones_like(sciimg),
                 ivarmodel = 0.05 * np.ones_like(sciimg),
                 scaleimg = np.ones_like(sciimg),
@@ -138,7 +139,7 @@ def test_all2dobj_hdr(init_dict):
     header = fits.getheader(kast_file)
     spectrograph = load_spectrograph('shane_kast_blue')
     # Do it
-    hdr = allspec2D.build_primary_hdr(header, spectrograph, master_dir=tstutils.data_path(''))
+    hdr = allspec2D.build_primary_hdr(header, spectrograph, calib_dir=tstutils.data_path(''))
     # Test it
     assert hdr['SKYSUB'] == 'MODEL'
 

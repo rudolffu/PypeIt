@@ -1,5 +1,6 @@
-import os
+from pathlib import Path
 import shutil
+import os
 
 from IPython import embed
 
@@ -8,7 +9,7 @@ import pytest
 import numpy as np
 
 #from pypeit.par.util import parse_pypeit_file
-from pypeit.tests.tstutils import data_path
+from pypeit.tests.tstutils import data_path, make_fake_fits_files
 from pypeit.metadata import PypeItMetaData
 from pypeit.spectrographs.util import load_spectrograph
 from pypeit.scripts.setup import Setup
@@ -20,23 +21,19 @@ def test_read_combid():
 
     # ------------------------------------------------------------------
     # In case of failed tests
-    setup_dir = data_path('setup_files')
-    if os.path.isdir(setup_dir):
-        shutil.rmtree(setup_dir)
-    config_dir = data_path('shane_kast_blue_A')
-    if os.path.isdir(config_dir):
+    config_dir = Path(data_path('shane_kast_blue_A')).resolve()
+    if config_dir.exists():
         shutil.rmtree(config_dir)
     # ------------------------------------------------------------------
 
     # Generate the pypeit file with the comb_id
     droot = data_path('b')
-    pargs = Setup.parse_args(['-r', droot, '-s', 'shane_kast_blue', '-c=all', '-b',
-                             '--extension=fits.gz', '--output_path={:s}'.format(data_path(''))])
+    pargs = Setup.parse_args(['-r', droot, '-s', 'shane_kast_blue', '-c', 'all', '-b',
+                             '--extension', 'fits.gz', '--output_path', f'{config_dir.parent}'])
     Setup.main(pargs)
-    shutil.rmtree(setup_dir)
 
-    pypeit_file = os.path.join(config_dir, 'shane_kast_blue_A.pypeit')
-    pypeItFile = PypeItFile.from_file(pypeit_file)
+    pypeit_file = config_dir / 'shane_kast_blue_A.pypeit'
+    pypeItFile = PypeItFile.from_file(str(pypeit_file))
 
     # Get the spectrograph
     spectrograph = None
@@ -51,9 +48,13 @@ def test_read_combid():
                          files=pypeItFile.filenames,
                          usrdata=pypeItFile.data, strict=False)
 
-    indx = pmd['filename'] == 'b27.fits.gz'
-    assert pmd['comb_id'][indx] == [1], 'Incorrect combination group ID'
-    assert pmd['comb_id'][np.where(~indx)[0]][0] == -1, 'Incorrect combination group ID'
+    b27_indx = pmd['filename'] == 'b27.fits.gz'
+    b24_indx = pmd['filename'] == 'b24.fits.gz'
+    assert pmd['comb_id'][b27_indx] > 0, 'Science file should have a combination group ID'
+    assert pmd['comb_id'][b24_indx] > 0, 'Standard file should have a combination group ID'
+    assert pmd['comb_id'][b27_indx] != pmd['comb_id'][b24_indx], 'Science and standard should not have same combination group ID'
+    no_combid_indx = np.logical_not(b27_indx | b24_indx)
+    assert pmd['comb_id'][np.where(no_combid_indx)[0]][0] == -1, 'Incorrect combination group ID'
 
     shutil.rmtree(config_dir)
 
@@ -80,3 +81,40 @@ def test_nirspec_lamps():
     # Check dome
     tst = spectrograph.lamps(fitstbl, 'dome')
     assert np.array_equal(tst, np.array([False, False, False, False, False,  True,  True,  True]))
+
+
+def test_setup_iter():
+
+    gen = PypeItMetaData.configuration_generator()
+    assert next(gen) == 'A', 'First setup identifier changed'
+
+    end = False
+    while not end:
+        try:
+            setup = next(gen)
+        except StopIteration:
+            end = True
+
+    assert setup == 'ZZ', 'Last setup identifier changed'
+    assert len(list(PypeItMetaData.configuration_generator())) \
+                == PypeItMetaData.maximum_number_of_configurations(), \
+                'Number of configuration identifiers changed'
+
+
+def test_multiple_setups():
+    filelist = make_fake_fits_files()
+    spectrograph = load_spectrograph("shane_kast_blue")
+    # Set the metadata
+    fitstbl = PypeItMetaData(spectrograph, spectrograph.default_pypeit_par(), files=filelist, strict=True)
+    fitstbl.get_frame_types()
+    cfgs = fitstbl.unique_configurations()
+    fitstbl.set_configurations(configs=cfgs)
+    # Now do some checks
+    for ff in range(len(fitstbl)):
+        if fitstbl[ff]['frametype'] == 'bias':
+            assert(len(fitstbl[ff]['setup'].split(",")) == 2)  # Two configurations for the bias frames
+        else:
+            assert (len(fitstbl[ff]['setup'].split(",")) == 1)  # One configuration for everything else
+    # Remove the created files
+    for fil in filelist:
+        os.remove(fil)

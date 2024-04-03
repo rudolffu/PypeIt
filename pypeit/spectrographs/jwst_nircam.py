@@ -67,7 +67,7 @@ class JWSTNIRCamSpectrograph(spectrograph.Spectrograph):
             ygap=0.,
             ysize=1.,
             platescale=0.063,
-            darkcurr=0.0335, # electron/s
+            darkcurr=120.6, # e-/pixel/hour  (=0.0335 e-/pixel/s)
             saturation=59200.,
             nonlinear=0.95,  # need to look up and update
             mincounts=-1e10,
@@ -83,7 +83,7 @@ class JWSTNIRCamSpectrograph(spectrograph.Spectrograph):
         detector_dict2.update(dict(
             det=2,
             dataext=0,
-            darkcurr=0.035,
+            darkcurr=126.0,  # e-/pixel/hour  (=0.035 e-/pixel/s)
             saturation=58500.,
             gain=np.atleast_1d(1.80),
             ronoise=np.atleast_1d(8.57),
@@ -96,7 +96,7 @@ class JWSTNIRCamSpectrograph(spectrograph.Spectrograph):
         """
         Define how metadata are derived from the spectrograph files.
 
-        That is, this associates the ``PypeIt``-specific metadata keywords
+        That is, this associates the PypeIt-specific metadata keywords
         with the instrument-specific header cards using :attr:`meta`.
         """
         self.meta = {}
@@ -127,7 +127,7 @@ class JWSTNIRCamSpectrograph(spectrograph.Spectrograph):
 
         Returns:
             :class:`~pypeit.par.pypeitpar.PypeItPar`: Parameters required by
-            all of ``PypeIt`` methods.
+            all of PypeIt methods.
         """
         par = super().default_pypeit_par()
 

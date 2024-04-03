@@ -96,6 +96,45 @@ Then run the script:
 
     pypeit_coadd_datacube BB1245p4238.coadd3d -o
 
+Combination options
+===================
+
+PypeIt currently supports two different methods to convert an spec2d frame into a datacube;
+these options are called ``subpixel`` (default) and ``NGP`` (which is short for, nearest grid point),
+and can be set using the following keyword arguments:
+
+.. code-block:: ini
+
+    [reduce]
+        [[cube]]
+            method = ngp
+
+The default option is called ``subpixel``, which divides each pixel in the spec2d frame
+into many subpixels, and assigns each subpixel to a voxel of the datacube. Flux is conserved,
+but voxels are correlated, and the error spectrum does not account for covariance between
+adjacent voxels. The subpixellation scale can be separately set in the spatial and spectral
+direction on the 2D detector. If you would like to change the subpixellation factors from
+the default values (5), you can set the ``spec_subpixel`` and  ``spat_subpixel`` keywords
+as follows:
+
+.. code-block:: ini
+
+    [reduce]
+        [[cube]]
+            method = subpixel
+            spec_subpixel = 8
+            spat_subpixel = 10
+
+The total number of subpixels generated for each detector pixel on the spec2d frame is
+spec_subpixel x spat_subpixel. The default values (5) divide each spec2d pixel into 25 subpixels
+during datacube creation. As an alternative, you can convert the spec2d frames into a datacube
+with the ``NGP`` method. This algorithm is effectively a 3D histogram. This approach is faster
+than ``subpixel``, flux is conserved, and voxels are not correlated. However, this option suffers
+the same downsides as any histogram; the choice of bin sizes can change how the datacube appears.
+This algorithm takes each pixel on the spec2d frame and puts the flux of this pixel into one voxel
+in the datacube. Depending on the binning used, some voxels may be empty (zero flux) while a
+neighbouring voxel might contain the flux from two spec2d pixels.
+
 Flux calibration
 ================
 
@@ -116,13 +155,13 @@ Sky Subtraction
 
 The default behaviour of PypeIt is to subtract the model sky that is
 derived from the science frame during the reduction. If you would like
-to turn off sky subtraction, set the following keyword argument:
+to turn off sky subtraction, set the following keyword argument (all lowercase):
 
 .. code-block:: ini
 
     [reduce]
         [[cube]]
-            skysub_frame = None
+            skysub_frame = none
 
 If you would like to use a dedicated sky frame for sky subtraction
 that is separate from the science frame, then you need to provide
@@ -140,7 +179,9 @@ frames, but add the following keyword arguments at the top of your
     [reduce]
         [[skysub]]
             joint_fit = True
-            user_regions = :50,50:
+            user_regions = :
+    [flexure]
+        spec_method = slitcen
 
 This ensures that all pixels in the slit are used to generate a
 complete model of the sky.
@@ -172,7 +213,7 @@ Astrometric correction
 If you would like to perform an astrometric correction, you
 need to install `scikit-image`_ (version > 0.17;
 see :ref:`installing-pip` or simply install `scikit-image`_ with pip directly). The default
-option is to perform the astrometric correction, if a :doc:`calibrations/master_align`
+option is to perform the astrometric correction, if a :doc:`calibrations/align`
 frame has been computed. To disable the astrometric
 correction, set the following keyword argument in your ``coadd3d``
 file:
@@ -227,15 +268,51 @@ cubes covering different wavelength range, but it can coadd
 multiple spec2D files into a single datacube if the wavelength
 setup overlaps, and the spatial positions are very similar.
 
-Difficulties with combining multiple datacubes
-==============================================
+Combining multiple datacubes
+============================
 
 PypeIt is able to combine standard star frames for flux calibration, and
 should not have any difficulty with this. If your science observations are
 designed so that there is very little overlap between exposures, you should
-not expect the automatic combination algorithm to perform well. Instead, you
-should output individual data cubes and manually combine the cubes with some
-other purpose-built software.
+not assume that the automatic combination algorithm will perform well. Instead,
+you may prefer to output individual data cubes and manually combine the cubes
+with some other purpose-built software. If you know the relative offsets very
+well, then you can specify these, and PypeIt can combine all frames into a
+single combined datacube. This is the recommended approach, provided that you
+know the relative offsets of each frame. In the following example, the first
+cube is assumed to be the reference cube (0.0 offset in both RA and Dec), and
+the second science frame is offset relative to the first by:
+
+.. code-block:: ini
+
+    Delta RA x cos(Dec) = 1.0" W
+    Delta Dec = 2.0" N
+
+The offset convention used in PypeIt is that positive offsets translate the RA and Dec
+of a frame to higher RA (i.e. more East) and higher Dec (i.e. more North). In the above
+example, frame 2 is 1" to the West of frame 1, meaning that we need to move frame 2 by
+1" to the East (i.e. a correction of +1"). Similarly, we need to more frame 2 by 2" South
+(i.e. a correction of -2"). Therefore, in the above example, the coadd3d file would look
+like the following:
+
+.. code-block:: ini
+
+    # User-defined execution parameters
+    [rdx]
+        spectrograph = keck_kcwi
+        detnum = 1
+    [reduce]
+        [[cube]]
+            combine = True
+            output_filename = BB1245p4238_datacube.fits
+            align = True
+
+    # Read in the data
+    spec2d read
+                               filename  |  ra_offset | dec_offset
+    Science/spec2d_scienceframe_01.fits  |  0.0       | 0.0
+    Science/spec2d_scienceframe_02.fits  |  1.0       | -2.0
+    spec2d end
 
 .. _coadd3d_datamodel:
 
@@ -253,22 +330,20 @@ plot a wavelength slice of the cube:
 
     from matplotlib import pyplot as plt
     from astropy.visualization import ZScaleInterval, ImageNormalize
-    import astropy.io.fits as fits
-    from astropy.wcs import WCS
+    from pypeit.coadd3d import DataCube
 
     filename = "datacube.fits"
-    cube = fits.open(filename)
-    hdu_sci = cube['FLUX']
-    hdu_var = cube['VARIANCE']
-    wcs = WCS(hdu_sci.header)
+    cube = DataCube.from_file(filename)
+    flux_cube = cube.flux  # Flux datacube
+    error_cube = cube.sig  # Errors associated with each voxel of the flux datacube
+    ivar_cube = cube.ivar  # Inverse variance cube
+    wcs = cube.wcs
     wave_slice = 1000
-    norm = ImageNormalize(hdu_sci.data[wave_slice,:,:], interval=ZScaleInterval())
+    norm = ImageNormalize(flux_cube[wave_slice,:,:], interval=ZScaleInterval())
     fig = plt.figure()
     fig.add_subplot(111, projection=wcs, slices=('x', 'y', wave_slice))
-    plt.imshow(hdu_sci.data[wave_slice,:,:], origin='lower', cmap=plt.cm.viridis, norm=norm)
+    plt.imshow(flux_cube[wave_slice,:,:], origin='lower', cmap=plt.cm.viridis, norm=norm)
     plt.xlabel('RA')
     plt.ylabel('Dec')
     plt.show()
-
-.. TODO: This needs an actual datamodel
 

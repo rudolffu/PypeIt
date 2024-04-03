@@ -2,8 +2,7 @@
 Dynamically build the rst documentation for the Calibration Images
 """
 
-from pathlib import Path
-from pkg_resources import resource_filename
+from importlib import resources
 
 from IPython import embed
 
@@ -21,7 +20,8 @@ def type_name(t):
     if issubclass(t, datamodel.DataContainer):
         return f':class:`~{t.__module__}.{t.__name__}`'
     if any([m in t.__module__ for m in ['numpy', 'astropy']]):
-        return f'`{t.__module__}.{t.__name__}`_'
+        name = 'bool' if t.__name__ == 'bool_' else t.__name__
+        return f'`{t.__module__}.{name}`_'
     return t.__name__
 
 
@@ -58,7 +58,7 @@ def build_datamodel_tbl(obj):
 if __name__ == '__main__':
 
     # Set the output directory
-    output_root = Path(resource_filename('pypeit', '')).resolve().parent / 'doc' / 'include'
+    output_root = resources.files('pypeit').parent / 'doc' / 'include'
 
     # All DataContainer objects
     # TODO: automate this?
@@ -67,6 +67,7 @@ if __name__ == '__main__':
     from pypeit.flatfield import FlatImages
     from pypeit.manual_extract import ManualExtractionObj
     from pypeit.onespec import OneSpec
+    from pypeit.scattlight import ScatteredLight
     from pypeit.sensfunc import SensFunc
     from pypeit.slittrace import SlitTraceSet
     from pypeit.spec2dobj import Spec2DObj
@@ -75,7 +76,7 @@ if __name__ == '__main__':
     from pypeit.wavecalib import WaveCalib
     from pypeit.wavetilts import WaveTilts
     from pypeit.bspline import bspline
-    from pypeit.core.datacube import DataCube
+    from pypeit.coadd3d import DataCube
     from pypeit.core.fitting import PypeItFit
     from pypeit.core.flexure import MultiSlitFlexure
     from pypeit.core.telluric import Telluric
@@ -86,7 +87,7 @@ if __name__ == '__main__':
 
     from pypeit.images import buildimage
 
-    datacontainers = [Alignments, EdgeTraceSet, FlatImages, ManualExtractionObj, OneSpec,
+    datacontainers = [Alignments, EdgeTraceSet, FlatImages, ManualExtractionObj, OneSpec, ScatteredLight,
                       SensFunc, SlitTraceSet, Spec2DObj, SpecObj, TracePCA, WaveCalib, WaveTilts,
                       bspline, DataCube, PypeItFit, MultiSlitFlexure, Telluric, DetectorContainer,
                       Mosaic, PypeItImage, WaveFit]

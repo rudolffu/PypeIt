@@ -4,8 +4,6 @@
 .. include:: ../include/links.rst
 
 """
-import os
-import glob
 
 from IPython import embed
 
@@ -29,6 +27,7 @@ from pypeit import io
 from pypeit.wavemodel import conv2res
 from pypeit.core.wavecal import wvutils
 from pypeit.core import fitting
+from pypeit.core import wave
 from pypeit import data
 
 
@@ -122,7 +121,7 @@ def find_standard_file(ra, dec, toler=20.*units.arcmin, check=False):
         Object right-ascension in decimal deg
     dec : float
         Object declination in decimal deg
-    toler : :class:`astropy.units.quantity.Quantity`, optional
+    toler : `astropy.units.Quantity`_, optional
         Tolerance on matching archived standards to input.  Expected
         to be in arcmin.
     check : bool, optional
@@ -154,9 +153,9 @@ def find_standard_file(ra, dec, toler=20.*units.arcmin, check=False):
     closest = dict(sep=999 * units.deg)
 
     for sset in std_sets:
-        path = os.path.join(data.Paths.standards, sset)
-        star_file = os.path.join(path, f"{sset}_info.txt")
-        if not os.path.isfile(star_file):
+        stds_path = data.Paths.standards / sset
+        star_file = stds_path / f"{sset}_info.txt"
+        if not star_file.is_file():
             msgs.warn(f"File does not exist!: {star_file}")
             continue
 
@@ -172,7 +171,7 @@ def find_standard_file(ra, dec, toler=20.*units.arcmin, check=False):
 
             # Generate a dict
             _idx = int(idx)
-            std_dict = dict(cal_file=os.path.join(path, star_tbl[_idx]['File']),
+            std_dict = dict(cal_file=stds_path / star_tbl[_idx]['File'],
                             name=star_tbl[_idx]['Name'],
 #                            std_ra=star_tbl[_idx]['RA_2000'],
 #                            std_dec=star_tbl[_idx]['DEC_2000'])
@@ -185,13 +184,13 @@ def find_standard_file(ra, dec, toler=20.*units.arcmin, check=False):
                 fil = None
             else:
                 # TODO: Does this need to be globbed? Why isn't the file
-                # name exact?
-                fil = glob.glob(std_dict['cal_file'] + '*')
+                # name exact?  ANSWER: The glob is to catch both .fits and .fits.gz
+                fil = list(std_dict['cal_file'].parent.glob(f"{std_dict['cal_file'].name}*"))
                 if len(fil) == 0:
                     # TODO: Error or warn?
-                    msgs.error("No standard star file: {:s}".format(std_dict['cal_file']))
+                    msgs.error(f"No standard star file: {std_dict['cal_file']}")
                 fil = fil[0]
-                msgs.info("Loading standard star file: {:s}".format(fil))
+                msgs.info(f"Loading standard star file: {fil}")
 
             # TODO: Put this stuff in a method, like `read_standard`
             if sset == 'xshooter':
@@ -201,6 +200,8 @@ def find_standard_file(ra, dec, toler=20.*units.arcmin, check=False):
                 std_dict['wave'] = std_spec['col1'] * units.AA
                 std_dict['flux'] = std_spec['col2'] / PYPEIT_FLUX_SCALE * \
                                    units.erg / units.s / units.cm ** 2 / units.AA
+                # Xshooter standard files use air wavelengths, convert them to vacuum
+                std_dict['wave'] = wave.airtovac(std_dict['wave'])
             elif sset == 'calspec':
                 std_dict['std_source'] = sset
                 std_spec = io.fits_open(fil)[1].data
@@ -208,7 +209,7 @@ def find_standard_file(ra, dec, toler=20.*units.arcmin, check=False):
                 std_dict['flux'] = std_spec['FLUX'] / PYPEIT_FLUX_SCALE \
                                    * units.erg / units.s / units.cm ** 2 / units.AA
             elif sset == 'esofil':
-                fil_basename = os.path.basename(fil)
+                fil_basename = fil.name  # Note: `fil` is a pathlib.Path object
                 if not fil_basename.startswith('f'):
                     msgs.error("The ESO reference standard filename must start with the string `f`;  make sure it is the case. Also make sure that the flux units in the file are in 10**(-16) erg/s/cm2/AA.")
                 # TODO let's add the star_mag here and get a uniform set of tags in the std_dict
@@ -272,8 +273,8 @@ def find_standard_file(ra, dec, toler=20.*units.arcmin, check=False):
     if check:
         return False
 
-    msgs.error("No standard star was found within a tolerance of {:g}".format(toler) + msgs.newline()
-               + "Closest standard was {:s} at separation {:g}".format(closest['name'], closest['sep'].to('arcmin')))
+    msgs.error(f"No standard star was found within a tolerance of {toler}{msgs.newline()}"
+               f"Closest standard was {closest['name']} at separation {closest['sep'].to('arcmin')}")
 
     return None
 
@@ -305,7 +306,7 @@ def stellar_model(V, sptype):
     logg_sol = np.log10(6.67259e-8) + np.log10(1.989e33) - 2.0 * np.log10(6.96e10)
 
     # Load Schmidt-Kaler (1982) table
-    sk82_file = os.path.join(data.Paths.standards, 'kurucz93', 'schmidt-kaler_table.txt')
+    sk82_file = data.Paths.standards / 'kurucz93' / 'schmidt-kaler_table.txt'
     sk82_tab = ascii.read(sk82_file, names=('Sp', 'logTeff', 'Teff', '(B-V)_0', 'M_V', 'B.C.', 'M_bol', 'L/L_sol'))
 
     # TODO, currently this only works on select stellar types. Add ability to interpolate across types.
@@ -350,7 +351,7 @@ def stellar_model(V, sptype):
     indg = np.argmin(np.abs(loggk - logg))
 
     # Grab Kurucz filename
-    std_file = os.path.join(data.Paths.standards, 'kurucz93', 'kp00', f'kp00_{int(Tk[indT])}.fits.gz')
+    std_file = data.Paths.standards / 'kurucz93' / 'kp00' / f'kp00_{int(Tk[indT])}.fits.gz'
     std = table.Table.read(std_file)
 
     # Grab specific spectrum
@@ -409,7 +410,7 @@ def get_standard_spectrum(star_type=None, star_mag=None, ra=None, dec=None):
         if 'A0' in star_type:
             msgs.info('Getting vega spectrum')
             ## Vega model from TSPECTOOL
-            vega_file = os.path.join(data.Paths.standards, 'vega_tspectool_vacuum.dat')
+            vega_file = data.Paths.standards / 'vega_tspectool_vacuum.dat'
             vega_data = table.Table.read(vega_file, comment='#', format='ascii')
             std_dict = dict(cal_file='vega_tspectool_vacuum', name=star_type, Vmag=star_mag,
                             std_ra=ra, std_dec=dec)
@@ -441,11 +442,14 @@ def load_extinction_data(longitude, latitude, extinctfilepar,
 
     Parameters
     ----------
-    longitude, latitude: Geocentric coordinates in degrees (floats).
-    extinctfilepar : (str)
+    longitude : float
+        Geocentric longitude in degrees.
+    latitude : float
+        Geocentric latitude in degrees.
+    extinctfilepar : str
         The sensfunc['extinct_file'] parameter, used to determine
         which extinction file to load.
-    toler : Angle, optional
+    toler : `astropy.coordinates.Angle`_, optional
         Tolerance for matching detector to site (5 deg)
 
     Returns
@@ -458,7 +462,7 @@ def load_extinction_data(longitude, latitude, extinctfilepar,
         # Observation coordinates
         obs_coord = coordinates.SkyCoord(longitude, latitude, frame='gcrs', unit=units.deg)
         # Read list
-        extinct_summ = os.path.join(data.Paths.extinction, 'README')
+        extinct_summ = data.Paths.extinction / 'README'
         extinct_files = table.Table.read(extinct_summ, comment='#', format='ascii')
         # Coords
         ext_coord = coordinates.SkyCoord(extinct_files['Lon'], extinct_files['Lat'], frame='gcrs',
@@ -498,17 +502,18 @@ def load_extinction_data(longitude, latitude, extinctfilepar,
 
 def extinction_correction(wave, airmass, extinct):
     """
-    Derive extinction correction
+    Derive extinction correction.
+
     Based on algorithm in LowRedux (long_extinct)
 
     Parameters
     ----------
-    wave:  `numpy.ndarray`_
+    wave : `numpy.ndarray`_
         Wavelengths for interpolation. Should be sorted.
         Assumes angstroms.
     airmass : float
         Airmass
-    extinct : Table
+    extinct : `astropy.table.Table`_
         Table of extinction values 
 
     Returns
@@ -603,7 +608,8 @@ def find_standard(specobj_list):
 
 
 def sensfunc(wave, counts, counts_ivar, counts_mask, exptime, airmass, std_dict, longitude, latitude, extinctfilepar, ech_orders=None,
-             mask_abs_lines=True, polyorder=4, balm_mask_wid=10.0, nresln=20., resolution=3000.,
+             mask_hydrogen_lines=True, mask_helium_lines=False,
+             polyorder=4, hydrogen_mask_wid=10.0, nresln=20., resolution=3000.,
              trans_thresh=0.9,polycorrect=True, polyfunc=False, debug=False):
     """
     Function to generate the sensitivity function. This function fits
@@ -616,7 +622,7 @@ def sensfunc(wave, counts, counts_ivar, counts_mask, exptime, airmass, std_dict,
     Args:
         wave (`numpy.ndarray`_):
             Wavelength of the star. Shape (nspec,) or (nspec, norders)
-        counts (ndarray):
+        counts (`numpy.ndarray`_):
             Flux (in counts) of the star. Shape (nspec,) or (nspec, norders)
         counts_ivar (`numpy.ndarray`_):
             Inverse variance of the star counts. Shape (nspec,) or (nspec, norders)
@@ -638,10 +644,12 @@ def sensfunc(wave, counts, counts_ivar, counts_mask, exptime, airmass, std_dict,
         ech_orders (int `numpy.ndarray`_):
             If passed the echelle orders will be added to the meta_table. ech_orders must be a numpy array of integers
             with the shape (norders,) giving the order numbers
-        mask_abs_lines (bool):
-            If True, mask stellar absorption lines before fitting sensitivity function. Default = True
+        mask_hydrogen_lines (bool):
+            If True, mask stellar hydrogen absorption lines before fitting sensitivity function. Default = True
+        mask_helium_lines (bool):
+            If True, mask stellar helium absorption lines before fitting sensitivity function. Default = False
         balm_mask_wid (float):
-            Parameter describing the width of the mask for or stellar absorption lines (i.e. mask_abs_lines=True). A region
+            Parameter describing the width of the mask for or stellar absorption lines (i.e. mask_hydrogen_lines=True). A region
             equal to balm_mask_wid*resln is masked where resln is the estimate for the spectral resolution in pixels
             per resolution element.
         polycorrect (bool):
@@ -668,7 +676,7 @@ def sensfunc(wave, counts, counts_ivar, counts_mask, exptime, airmass, std_dict,
 
     """
 
-    wave_arr, counts_arr, ivar_arr, mask_arr, nspec, norders = utils.spec_atleast_2d(wave, counts, counts_ivar, counts_mask)
+    wave_arr, counts_arr, ivar_arr, mask_arr, log10_blaze_func, nspec, norders = utils.spec_atleast_2d(wave, counts, counts_ivar, counts_mask)
     zeropoint_data = np.zeros_like(wave_arr)
     zeropoint_data_gpm = np.zeros_like(wave_arr, dtype=bool)
     zeropoint_fit = np.zeros_like(wave_arr)
@@ -684,8 +692,9 @@ def sensfunc(wave, counts, counts_ivar, counts_mask, exptime, airmass, std_dict,
         # Fit the zeropoint
         zeropoint_data[:, iord], zeropoint_data_gpm[:, iord], zeropoint_fit[:, iord], zeropoint_fit_gpm[:, iord], =\
             fit_zeropoint(wave_arr[:,iord], Nlam_star, Nlam_star_ivar, gpm_star, std_dict,
-                          mask_abs_lines=mask_abs_lines, polyorder=polyorder,
-                          balm_mask_wid=balm_mask_wid, nresln=nresln, resolution=resolution, trans_thresh=trans_thresh,
+                          mask_hydrogen_lines=mask_hydrogen_lines, mask_helium_lines=mask_helium_lines,
+                          polyorder=polyorder,
+                          hydrogen_mask_wid=hydrogen_mask_wid, nresln=nresln, resolution=resolution, trans_thresh=trans_thresh,
                           polycorrect=polycorrect, polyfunc=polyfunc, debug=debug)
         # Calculate the minimum and maximum wavelength for this order
         wave_min[iord] = wave_arr[wave_arr[:,iord] > 1.0, iord].min()
@@ -797,7 +806,7 @@ def get_sensfunc_factor(wave, wave_zp, zeropoint, exptime, tellmodel=None, extin
             msgs.error('You must specify longitude and latitude if we are extinction correcting')
         # Apply Extinction if optical bands
         msgs.info("Applying extinction correction")
-        msgs.warn("Extinction correction applyed only if the spectra covers <10000Ang.")
+        msgs.warn("Extinction correction applied only if the spectra covers <10000Ang.")
         extinct = load_extinction_data(longitude, latitude, extinctfilepar)
         ext_corr = extinction_correction(wave * units.AA, airmass, extinct)
         senstot = sensfunc_obs * ext_corr
@@ -861,7 +870,8 @@ def counts2Nlam(wave, counts, counts_ivar, counts_mask, exptime, airmass, longit
 
 
 def fit_zeropoint(wave, Nlam_star, Nlam_ivar_star, gpm_star, std_dict,
-                  mask_abs_lines=True, polyorder=4, balm_mask_wid=10.0, 
+                  mask_hydrogen_lines=True, mask_helium_lines=False,
+                  polyorder=4, hydrogen_mask_wid=10.0,
                   nresln=20., resolution=3000.,
                   trans_thresh=0.9, polycorrect=True, 
                   polyfunc=False, debug=False):
@@ -883,12 +893,14 @@ def fit_zeropoint(wave, Nlam_star, Nlam_ivar_star, gpm_star, std_dict,
             Good pixel mask for Nlam_star
         std_dict (dict):
             Dictionary containing information about the standard star returned by flux_calib.get_standard_spectrum
-        mask_abs_lines (bool, optional):
-            If True, mask stellar absorption lines before fitting sensitivity function. Default = True
-        balm_mask_wid (float, optional):
-            Parameter describing the width of the mask for or stellar absorption lines (i.e. mask_abs_lines=True). A region
-            equal to balm_mask_wid*resln is masked where resln is the estimate for the spectral resolution in pixels
-            per resolution element.
+        mask_hydrogen_lines (bool, optional):
+            If True, mask stellar hydrogen absorption lines before fitting sensitivity function. Default = True
+        mask_helium_lines (bool, optional):
+            If True, mask stellar helium absorption lines before fitting sensitivity function. Default = False
+        hydrogen_mask_wid (float, optional):
+            Parameter describing the width of the mask for or stellar absorption lines (i.e., ``mask_hydrogen_lines=True``)
+            in Angstroms.  A region equal to ``hydrogen_mask_wid`` on either side of the line center is masked.
+            Default = 10A
         polycorrect (bool, optional):
             Whether you want to interpolate the zeropoint with polynomial in the stellar absortion line regions before
             fitting with the bspline
@@ -934,22 +946,25 @@ def fit_zeropoint(wave, Nlam_star, Nlam_ivar_star, gpm_star, std_dict,
             plt.show()
 
     # Get masks from observed star spectrum. True = Good pixels
-    mask_bad, mask_balm, mask_tell = get_mask(wave, Nlam_star, Nlam_ivar_star, gpm_star, mask_abs_lines=mask_abs_lines,
-                                              mask_telluric=True, balm_mask_wid=balm_mask_wid, trans_thresh=trans_thresh)
+    mask_bad, mask_recomb, mask_tell = get_mask(wave, Nlam_star, Nlam_ivar_star, gpm_star,
+                                              mask_hydrogen_lines=mask_hydrogen_lines,
+                                              mask_helium_lines=mask_helium_lines,
+                                              mask_telluric=True, hydrogen_mask_wid=hydrogen_mask_wid,
+                                              trans_thresh=trans_thresh)
 
     # Get zeropoint
     zeropoint_data, zeropoint_data_gpm, zeropoint_fit, zeropoint_fit_gpm = standard_zeropoint(
-        wave, Nlam_star, Nlam_ivar_star, mask_bad, flux_true, mask_balm=mask_balm,
+        wave, Nlam_star, Nlam_ivar_star, mask_bad, flux_true, mask_recomb=mask_recomb,
         mask_tell=mask_tell, maxiter=35, upper=3, lower=3, polyorder=polyorder,
-        balm_mask_wid=balm_mask_wid, nresln=nresln, resolution=resolution,
+        balm_mask_wid=hydrogen_mask_wid, nresln=nresln, resolution=resolution,
         polycorrect=polycorrect, polyfunc=polyfunc, debug=debug)
 
     if debug:
         sensfactor = Nlam_to_Flam(wave, zeropoint_fit)
         plt.plot(wave[zeropoint_fit_gpm], flux_true[zeropoint_fit_gpm], color='k',lw=2, label='Reference Star')
         plt.plot(wave[zeropoint_fit_gpm], Nlam_star[zeropoint_fit_gpm]*sensfactor[zeropoint_fit_gpm], color='r', label='Fluxed Observed Star')
-        plt.xlabel(r'Wavelength [$\AA$]')
-        plt.ylabel('Flux [erg/s/cm2/Ang.]')
+        plt.xlabel('Wavelength (Angstroms)')
+        plt.ylabel(r'Flux (erg/s/cm$^2$/$\AA$)')
         plt.legend(fancybox=True, shadow=True)
         plt.show()
 
@@ -957,9 +972,9 @@ def fit_zeropoint(wave, Nlam_star, Nlam_ivar_star, gpm_star, std_dict,
 
 
 def get_mask(wave_star, flux_star, ivar_star, mask_star, 
-             mask_abs_lines=True, mask_telluric=True, balm_mask_wid=10., 
-             trans_thresh=0.9):
-    """
+             mask_hydrogen_lines=True, mask_helium_lines=False,
+             mask_telluric=True, hydrogen_mask_wid=10., trans_thresh=0.9):
+    r"""
     Generate a set of masks from your observed standard spectrum.
     e.g. Balmer absorption
 
@@ -974,12 +989,20 @@ def get_mask(wave_star, flux_star, ivar_star, mask_star,
     mask_star: bool, optional
         whether you need to mask Hydrogen recombination line region. 
         If False, the returned msk_star are all good.
-    mask_tell: bool, optional
-        whether you need to mask telluric region. If False, the returned msk_tell are all good.
-    balm_mask_wid: float
-      in units of angstrom
-      Mask parameter for Balmer absorption. A region equal to
-      balm_mask_wid is masked.
+    mask_hydrogen_lines: bool, optional
+        whether you need to mask hydrogen absorption lines, mask width set
+        by ``hydrogen_mask_wid``
+    mask_helium_lines: bool, optional
+        whether you need to mask hydrogen absorption lines, mask width set
+        to :math:`0.5 \times` ``hydrogen_mask_wid``
+    mask_telluric: bool, optional
+        whether you need to mask telluric region. If False, the returned
+        msk_tell are all good.
+    hydrogen_mask_wid: float, optional
+        in units of angstrom
+        Mask parameter for hydrogen recombination absorption lines. A region
+        equal to ``hydrogen_mask_wid`` on either side of the line center is
+        masked.
     trans_thresh: float, optional
         parameter for selecting telluric regions.
 
@@ -995,7 +1018,7 @@ def get_mask(wave_star, flux_star, ivar_star, mask_star,
 
     # Mask (True = good pixels)
     # mask for recombination lines
-    mask_balm = np.ones_like(flux_star).astype(bool)
+    mask_recomb = np.ones_like(flux_star).astype(bool)
     # mask for telluric regions
     mask_tell = np.ones_like(flux_star).astype(bool)
 
@@ -1012,43 +1035,15 @@ def get_mask(wave_star, flux_star, ivar_star, mask_star,
     atms_cutoff = wave_star <= 3000.0
     mask_bad[atms_cutoff] = False
 
-    # TODO JFH replace with mask_star_lines from telluric.py
-    if mask_abs_lines:
-        # Mask Balmer, Paschen, Brackett, and Pfund recombination lines
-        msgs.info("Masking recombination lines:")
-        # Mask Balmer
-        msgs.info(" Masking Balmer")
-        lines_balm = np.array([3836.4, 3969.6, 3890.1, 4102.8, 4102.8, 4341.6, 4862.7, 5407.0,
-                               6564.6, 8224.8, 8239.2])
-        for line_balm in lines_balm:
-            ibalm = np.abs(wave_star - line_balm) <= balm_mask_wid
-            mask_balm[ibalm] = False
-        # Mask Paschen
-        msgs.info(" Masking Paschen")
-        # air wavelengths from:
-        # https://www.subarutelescope.org/Science/Resources/lines/hi.html
-        lines_pasc = np.array([8203.6, 8440.3, 8469.6, 8504.8, 8547.7, 8600.8, 8667.4, 8752.9,
-                               8865.2, 9017.4, 9229.0, 9546.0, 10049.4, 10938.1,
-                               12818.1, 18751.0])
-        for line_pasc in lines_pasc:
-            ipasc = np.abs(wave_star - line_pasc) <= balm_mask_wid
-            mask_balm[ipasc] = False
-        # Mask Brackett
-        msgs.info(" Masking Brackett")
-        # air wavelengths from:
-        # https://www.subarutelescope.org/Science/Resources/lines/hi.html
-        lines_brac = np.array([14584.0, 18174.0, 19446.0, 21655.0,26252.0, 40512.0])
-        for line_brac in lines_brac:
-            ibrac = np.abs(wave_star - line_brac) <= balm_mask_wid
-            mask_balm[ibrac] = False
-        # Mask Pfund
-        msgs.info(" Masking Pfund")
-        # air wavelengths from:
-        # https://www.subarutelescope.org/Science/Resources/lines/hi.html
-        lines_pfund = np.array([22788.0, 32961.0, 37395.0, 46525.0,74578.0])
-        for line_pfund in lines_pfund:
-            ipfund = np.abs(wave_star - line_pfund) <= balm_mask_wid
-            mask_balm[ipfund] = False
+    if mask_hydrogen_lines:
+        mask_recomb = mask_stellar_hydrogen(
+            wave_star, mask_width=hydrogen_mask_wid, mask_star=mask_recomb
+        )
+
+    if mask_helium_lines:
+        mask_recomb = mask_stellar_helium(
+            wave_star, mask_width=hydrogen_mask_wid / 2.0, mask_star=mask_recomb
+        )
 
     if mask_telluric:
         ## Mask telluric region in the optical
@@ -1089,13 +1084,166 @@ def get_mask(wave_star, flux_star, ivar_star, mask_star,
         else:
             msgs.info('Your spectrum is bluer than 9100A, only optical telluric regions are masked.')
 
-    return mask_bad, mask_balm, mask_tell
+    return mask_bad, mask_recomb, mask_tell
+
+
+def mask_stellar_hydrogen(wave_star, mask_width=10.0, mask_star=None):
+    """
+    Routine to mask stellar hydrogen recombination lines
+
+    .. note::
+        This function is pulled out separate from :func:`get_mask` because
+        it is used in the ``telluric`` module, independent of the remainder
+        of the functionality in :func:`get_mask`.
+
+    Args:
+        wave_star (`numpy.ndarray`_):
+            Wavelength of the stellar spectrum
+            shape (nspec,) or (nspec, nimgs)
+        mask_width (float, optional):
+            width to mask on either side of each line center in Angstroms
+        mask_star (`numpy.ndarray`_, optional):
+            Incoming star mask to which to add the hydrogen lines
+            (Default: None)
+
+    Returns:
+        `numpy.ndarray`_:  boolean mask.  Same shape as ``wave_star``, True=Good
+        (i.e.  does not hit a stellar absorption line).
+    """
+
+    if mask_star is None:
+        mask_star = np.ones_like(wave_star, dtype=bool)
+    # Mask Balmer, Paschen, Brackett, and Pfund recombination lines
+    msgs.info("Masking hydrogen recombination lines")
+
+    # Mask Balmer
+    msgs.info(" Masking Balmer")
+    # Vacuum Wavelengths from NIST (TEB, 2023-02-10)
+    lines_balm = np.array([6564.6, 4862.7, 4341.7, 4102.9,
+                           3971.2, 3890.2, 3836.4])
+    # Extra lines previously in the list, source unknown:
+    #      [5407.0, 8224.8, 8239.2]
+    for line_balm in lines_balm:
+        ibalm = np.abs(wave_star - line_balm) <= mask_width
+        mask_star[ibalm] = False
+
+    # Mask Paschen
+    msgs.info(" Masking Paschen")
+    # Vacuum Wavelengths from NIST (TEB, 2023-02-10)
+    lines_pasc = np.array([18756.4, 12821.6, 10941.2, 10052.6,
+                           9548.8, 9232.2, 9017.8, 8865.3,
+                           8752.9, 8667.4, 8600.8, 8547.7,
+                           8504.8, 8469.6, 8440.3, 8203.6])
+    for line_pasc in lines_pasc:
+        ipasc = np.abs(wave_star - line_pasc) <= mask_width
+        mask_star[ipasc] = False
+
+    # Mask Brackett
+    msgs.info(" Masking Brackett")
+    # Vacuum Wavelengths from NIST (TEB, 2023-02-10)
+    lines_brac = np.array([40522.8, 26258.7, 21661.2, 19446.0,
+                           18179.2, 17366.9, 14584.0])
+    for line_brac in lines_brac:
+        ibrac = np.abs(wave_star - line_brac) <= mask_width
+        mask_star[ibrac] = False
+
+    # Mask Pfund
+    msgs.info(" Masking Pfund")
+    # Vacuum Wavelengths from NIST (TEB, 2023-02-10)
+    lines_pfund = np.array([74599.0, 46537.8, 37405.8, 32969.8, 22788.0])
+    for line_pfund in lines_pfund:
+        ipfund = np.abs(wave_star - line_pfund) <= mask_width
+        mask_star[ipfund] = False
+
+    return mask_star
+
+
+def mask_stellar_helium(wave_star, mask_width=5.0, mask_star=None):
+    """
+    Routine to mask stellar helium recombination lines
+
+    .. note::
+
+        This function is pulled out separate from :func:`get_mask` because
+        it is used in the ``telluric`` module, independent of the remainder
+        of the functionality in :func:`get_mask`.
+
+    Args:
+        wave_star (`numpy.ndarray`_):
+            Wavelength of the stellar spectrum
+            shape (nspec,) or (nspec, nimgs)
+        mask_width (float, optional):
+            width to mask on either side of each line center in Angstroms
+        mask_star (`numpy.ndarray`_, optional):
+            Incoming star mask to which to add the ionized helium lines
+            (Default: None)
+
+    Returns:
+        `numpy.ndarray`_:  boolean mask.  Same shape as ``wave_star``, True=Good
+        (i.e.  does not hit a stellar absorption line).
+    """
+
+    if mask_star is None:
+        mask_star = np.ones_like(wave_star, dtype=bool)
+    # Mask Balmer, Paschen, Brackett, and Pfund recombination lines
+    msgs.info("Masking ionized helium recombination lines")
+
+    # Mask HeII
+    msgs.info(" Masking HeII lines")
+    # Prominent HeII lines not overlapped by hydrogen lines:
+    #    Vacuum wavelengths from Hubeney & Milhas (2015)
+    #    "Theory of Stellar Atmospheres", p. 191.
+    lines_heII = np.array([4687.2,   # 3 -> 4
+                            4542.9,   # 4 -> 9
+                            5413.1,   # 4 -> 7
+                            10126.6]) # 4 -> 5
+    for line_heII in lines_heII:
+        iheII = np.abs(wave_star - line_heII) < mask_width
+        mask_star[iheII] = False
+
+    return mask_star
 
 
 # These are physical limits on the allowed values of the zeropoint in magnitudes
+def eval_zeropoint(theta, func, wave, wave_min, wave_max, log10_blaze_func_per_ang=None):
+    """
+    Evaluate the zeropoint model.
+
+    Parameters
+    ----------
+    theta : `numpy.ndarray`_
+        Parameter vector for the zeropoint model
+    func : callable
+        Function for the zeropoint model from the set of available functions in
+        :func:`~pypeit.core.fitting.evaluate_fit`.
+    wave : `numpy.ndarray`_, shape = (nspec,)
+        Wavelength vector for zeropoint. 
+    wave_min : float
+        Minimum wavelength for the zeropoint fit to be passed as an argument to
+        :func:`~pypeit.core.fitting.evaluate_fit`
+    wave_max : float
+        Maximum wavelength for the zeropoint fit to be passed as an argument to
+        :func:`~pypeit.core.fitting.evaluate_fit`
+    log10_blaze_func_per_ang : `numpy.ndarray`_, optional, shape = (nspec,)
+        Log10 blaze function per angstrom. This option is used if the zeropoint
+        model is relative to the non-parametric blaze function determined from
+        flats. The blaze function is defined on the wavelength grid wave. 
+
+    Returns
+    -------
+    zeropoint : `numpy.ndarray`_, shape = (nspec,)
+        Zeropoint evaluated on the wavelength grid wave.
+    """
+    poly_model = fitting.evaluate_fit(theta, func, wave, minx=wave_min, maxx=wave_max)
+    zeropoint = poly_model - 5.0 * np.log10(wave) + ZP_UNIT_CONST
+    if log10_blaze_func_per_ang is not None:
+        zeropoint += 2.5*log10_blaze_func_per_ang
+
+    return zeropoint
+
 
 def Nlam_to_Flam(wave, zeropoint, zp_min=5.0, zp_max=30.0):
-    """
+    r"""
     The factor that when multiplied into N_lam 
     converts to F_lam, i.e. S_lam where S_lam \equiv F_lam/N_lam
 
@@ -1122,7 +1270,7 @@ def Nlam_to_Flam(wave, zeropoint, zp_min=5.0, zp_max=30.0):
     return factor
 
 def Flam_to_Nlam(wave, zeropoint, zp_min=5.0, zp_max=30.0):
-    """
+    r"""
     The factor that when multiplied into F_lam converts to N_lam, 
     i.e. 1/S_lam where S_lam \equiv F_lam/N_lam
 
@@ -1137,7 +1285,7 @@ def Flam_to_Nlam(wave, zeropoint, zp_min=5.0, zp_max=30.0):
     Returns
     -------
     factor: `numpy.ndarray`_
-        Factor that when multiplied into F_lam converts to N_lam
+        Factor that when multiplied into F_lam converts to N_lam, i.e. 1/S_lam
 
     """
     gpm = (wave > 1.0) & (zeropoint > zp_min) & (zeropoint < zp_max)
@@ -1159,7 +1307,7 @@ def compute_zeropoint(wave, N_lam, N_lam_gpm, flam_std_star, tellmodel=None):
     N_lam_gpm: `numpy.ndarray`_
         N_lam mask, good pixel mask, boolean, shape (nspec,)
     flam_std_star: `numpy.ndarray`_
-        True standard star spectrum units set of PYPEIT_FLUX_SCALE erg/s/cm^2/sm/Angstrom
+        True standard star spectrum in units of PYPEIT_FLUX_SCALE erg/s/cm^2/Angstrom
     tellmodel: `numpy.ndarray`_
         Telluric absorption model, optional, shape (nspec,)
 
@@ -1226,21 +1374,21 @@ def zeropoint_qa_plot(wave, zeropoint_data, zeropoint_data_gpm, zeropoint_fit, z
 
     Parameters
     ----------
-    wave: `numpy.ndarray`_
+    wave : `numpy.ndarray`_
         Wavelength array
-    zeropoint_data: `numpy.ndarray`_
+    zeropoint_data : `numpy.ndarray`_
         Zeropoint data array
-    zeropoint_data_gpm: bool `numpy.ndarray`_
+    zeropoint_data_gpm : boolean `numpy.ndarray`_
         Good pixel mask array for zeropoint_data
-    zeropoint_fit: `numpy.ndarray`_
+    zeropoint_fit : `numpy.ndarray`_
         Zeropoint fitting array
-    zeropoint_fit_gpm: bool zeropoint_fit
+    zeropoint_fit_gpm : boolean `numpy.ndarray`_
         Good pixel mask array for zeropoint_fit
-    title: str, optional
+    title : str, optional
         Title for the QA plot
-    axis: None or matplotlib.pyplot axis, optional
-        axis used for ploting.
-    show: bool, optional
+    axis : `matplotlib.axes.Axes`_, optional
+        axis used for ploting.  If None, a new plot is created
+    show : bool, optional
         Whether to show the QA plot
     """
 
@@ -1253,9 +1401,9 @@ def zeropoint_qa_plot(wave, zeropoint_data, zeropoint_data_gpm, zeropoint_fit, z
     rejmask = zeropoint_data_gpm[wv_gpm] & np.logical_not(zeropoint_fit_gpm[wv_gpm])
     axis.plot(wave[wv_gpm], zeropoint_data[wv_gpm], label='Zeropoint estimated', drawstyle='steps-mid', color='k', alpha=0.7, zorder=5, linewidth=1.0)
     axis.plot(wave[wv_gpm], zeropoint_fit[wv_gpm], label='Zeropoint fit', color='red', linewidth=2.0, zorder=7, alpha=0.7)
-    axis.plot(wave[wv_gpm][rejmask], zeropoint_data[wv_gpm][rejmask], 's', zorder=10, mfc='None', mec='blue', mew=0.7, label='rejected pixels')
+    axis.plot(wave[wv_gpm][rejmask], zeropoint_data[wv_gpm][rejmask], 's', zorder=10, mfc='None', mec='blue', mew=0.7, label='rejected pixels from fit')
     axis.plot(wave[wv_gpm][np.logical_not(zeropoint_data_gpm[wv_gpm])], zeropoint_data[wv_gpm][np.logical_not(zeropoint_data_gpm[wv_gpm])], 'v',
-             zorder=9, mfc='None', mec='orange', mew=0.7, label='originally masked')
+             zorder=11, mfc='None', mec='orange', mew=0.7, label='originally masked')
     med_filt_mask = zeropoint_data_gpm[wv_gpm] & np.isfinite(zeropoint_data[wv_gpm])
     zp_med_filter = utils.fast_running_median(zeropoint_data[wv_gpm][med_filt_mask], 11)
     axis.set_ylim(0.95 * zp_med_filter.min(), 1.05 * zp_med_filter.max())
@@ -1268,7 +1416,7 @@ def zeropoint_qa_plot(wave, zeropoint_data, zeropoint_data_gpm, zeropoint_fit, z
 
 
 
-def standard_zeropoint(wave, Nlam, Nlam_ivar, Nlam_gpm, flam_true, mask_balm=None, mask_tell=None,
+def standard_zeropoint(wave, Nlam, Nlam_ivar, Nlam_gpm, flam_true, mask_recomb=None, mask_tell=None,
                        maxiter=35, upper=3.0, lower=3.0, func = 'polynomial', polyorder=5, balm_mask_wid=50.,
                        nresln=20., resolution=2700., polycorrect=True, debug=False, polyfunc=False):
     """
@@ -1281,32 +1429,33 @@ def standard_zeropoint(wave, Nlam, Nlam_ivar, Nlam_gpm, flam_true, mask_balm=Non
     Nlam : `numpy.ndarray`_
         counts/s/Angstrom as observed
     Nlam_ivar : `numpy.ndarray`_
-      inverse variance of counts/s/Angstrom
+        inverse variance of counts/s/Angstrom
     Nlam_gpm : `numpy.ndarray`_
-      mask for bad pixels. True is good.
-    flam_true : Quantity array
-      standard star true flux (erg/s/cm^2/A)
-    mask_balm: `numpy.ndarray`_
-      mask for hydrogen recombination lines. True is good.
+        mask for bad pixels. True is good.
+    flam_true : `astropy.units.Quantity`_
+        array with true standard star flux (erg/s/cm^2/A)
+    mask_recomb: `numpy.ndarray`_
+        mask for hydrogen (and/or helium II) recombination lines. True is good.
     mask_tell: `numpy.ndarray`_
-      mask for telluric regions. True is good.
-    maxiter : integer
-      maximum number of iterations for polynomial fit
-    upper : integer
-      number of sigma for rejection in polynomial
-    lower : integer
-      number of sigma for rejection in polynomial
-    polyorder : integer
-      order of polynomial fit
+        mask for telluric regions. True is good.
+    maxiter : int
+        maximum number of iterations for polynomial fit
+    upper : int
+        number of sigma for rejection in polynomial
+    lower : int
+        number of sigma for rejection in polynomial
+    polyorder : int
+        order of polynomial fit
     balm_mask_wid: float
-      in units of angstrom
-      Mask parameter for Balmer absorption. A region equal to
-      balm_mask_wid is masked.
-    resolution: integer/float.
-      spectra resolution
-      This paramters should be removed in the future. The resolution should be estimated from spectra directly.
+        Mask parameter for Balmer absorption. A region equal to balm_mask_wid in
+        units of angstrom is masked.
+    nresln: int, float
+        number of resolution elements between breakpoints
+    resolution: int, float
+        The spectral resolution.  This paramters should be removed in the
+        future. The resolution should be estimated from spectra directly.
     debug : bool
-      if True shows some dubugging plots
+        if True shows some dubugging plots
 
     Returns
     -------
@@ -1326,12 +1475,12 @@ def standard_zeropoint(wave, Nlam, Nlam_ivar, Nlam_gpm, flam_true, mask_balm=Non
     # check masks
     if mask_tell is None:
         mask_tell = np.ones_like(wave,dtype=bool)
-    if mask_balm is None:
-        mask_balm = np.ones_like(wave, dtype=bool)
+    if mask_recomb is None:
+        mask_recomb = np.ones_like(wave, dtype=bool)
 
     zeropoint_data, zeropoint_data_gpm = compute_zeropoint(wave, Nlam, Nlam_gpm, flam_true)
 
-    zeropoint_fitmask = zeropoint_data_gpm & mask_tell & mask_balm
+    zeropoint_fitmask = zeropoint_data_gpm & mask_tell & mask_recomb
     wave_min = wave[wave > 1.0].min()
     wave_max = wave[wave > 1.0].max()
 
@@ -1354,6 +1503,7 @@ def standard_zeropoint(wave, Nlam, Nlam_ivar, Nlam_gpm, flam_true, mask_balm=Non
     zeropoint_clean_gpm = zeropoint_data_gpm.copy()
     # Polynomial corrections on Hydrogen Recombination lines
     if (np.sum(zeropoint_fitmask) > 0.5 * len(zeropoint_fitmask)) & polycorrect:
+        msgs.info("Replacing bspline fit with polyfit over Hydrogen Recombination line regions")
         ## Only correct Hydrogen Recombination lines with polyfit in the telluric free region
         balmer_clean = np.zeros_like(wave, dtype=bool)
         # Commented out the bluest recombination lines since they are weak for spectroscopic standard stars.
@@ -1387,6 +1537,12 @@ def standard_zeropoint(wave, Nlam, Nlam_ivar, Nlam_gpm, flam_true, mask_balm=Non
         msgs.warn("Changing input nresln to fix this")
         nresln = std_res / std_pix
 
+    # Output some helpful information for double-checking input params are correct
+    msgs.test(f" This is the passed-in R: {resolution}")
+    msgs.info(f" This is the standard pixel: {std_pix:.2f} Å")
+    msgs.info(f" This is the standard resolution element: {std_res:.2f} Å")
+    msgs.info(f" Breakpoint spacing: {std_res * nresln:.2f} pixels")
+
     # Fit zeropoint with bspline
     kwargs_bspline = {'bkspace': std_res * nresln}
     kwargs_reject = {'maxrej': 5}
@@ -1395,7 +1551,7 @@ def standard_zeropoint(wave, Nlam, Nlam_ivar, Nlam_gpm, flam_true, mask_balm=Non
     fullbkpt = init_bspline.breakpoints
 
     # remove masked regions from breakpoints
-    msk_bkpt = interpolate.interp1d(wave, zeropoint_clean_gpm, kind='nearest', fill_value='extrapolate')(fullbkpt)
+    msk_bkpt = interpolate.interp1d(wave, zeropoint_fitmask, kind='nearest', fill_value='extrapolate')(fullbkpt)
     init_breakpoints = fullbkpt[msk_bkpt > 0.999]
 
     # init_breakpoints = fullbkpt
@@ -1409,23 +1565,26 @@ def standard_zeropoint(wave, Nlam, Nlam_ivar, Nlam_gpm, flam_true, mask_balm=Non
     if debug:
         # Check for calibration
         plt.figure(1)
-        plt.plot(wave, zeropoint_data, drawstyle='steps-mid', color='black', label='Zeropoint Data')
-        plt.plot(wave, zeropoint_bspl, color='cornflowerblue', label='Bspline fit')
+        plt.plot(wave, zeropoint_data, drawstyle='steps-mid', color='black', label='Zeropoint Data', zorder=1)
+        plt.plot(wave, zeropoint_bspl, color='cornflowerblue', label='Bspline fit', linewidth=1.0, zorder=2)
+        plt.plot(wave, zeropoint_poly, color='orchid', label='PolyFit for masking', linewidth=2.0, zorder=0)
         plt.plot(wave[np.invert(zeropoint_fitmask)], zeropoint_data[np.invert(zeropoint_fitmask)], '+', color='red', markersize=5.0,
-                 label='masked zeropoint')
-        plt.plot(wave[np.invert(zeropoint_fitmask)], zeropoint_bspl[np.invert(zeropoint_fitmask)], '+', color='red', markersize=5.0,
-                 label='masked zeropoint_bspl_fit')
-        plt.plot(init_breakpoints, zeropoint_bspl_bkpt, '.', color='green', markersize=4.0, label='breakpoints')
-        plt.plot(init_breakpoints, np.interp(init_breakpoints, wave, zeropoint_data), '.', color='green',
+                 label='masked zeropoint_fitmask', zorder=4)
+        plt.plot(wave[np.invert(zeropoint_fit_gpm)], zeropoint_bspl[np.invert(zeropoint_fit_gpm)], 'x', color='pink', markersize=5.0,
+                 label='masked zeropoint_bspl_fit', zorder=3)
+        plt.plot(init_breakpoints, zeropoint_bspl_bkpt, '.', color='cyan', markersize=8.0, label='breakpoints', zorder=10)
+        plt.plot(init_breakpoints, np.interp(init_breakpoints, wave, zeropoint_data), '.', color='green', zorder=15,
                  markersize=4.0,
                  label='data interpolated onto breakpoints')
         plt.plot(wave, 1.0 / np.sqrt(zeropoint_ivar), color='orange', label='sigma used for fits')
         plt.legend()
-        plt.xlabel('Wavelength [ang]')
+        plt.xlabel('Wavelength (Angstroms)')
+        plt.ylabel('Zeropoint (AB mag)')
         med_filt_mask = zeropoint_data_gpm & np.isfinite(zeropoint_data)
         zp_med_filter = utils.fast_running_median(zeropoint_data[med_filt_mask], 11)
         plt.ylim(0.95 * zp_med_filter.min(), 1.05 * zp_med_filter.max())
         plt.title('Bspline fit')
+        plt.legend(fancybox=True, shadow=True)
         plt.show()
 
     if ((np.sum(zeropoint_fitmask) > 0.5 * len(zeropoint_fitmask)) & polycorrect):
@@ -1444,7 +1603,8 @@ def standard_zeropoint(wave, Nlam, Nlam_ivar, Nlam_gpm, flam_true, mask_balm=Non
 
 
     # TODO Should we return the bspline fitmask here?
-    return zeropoint_data, zeropoint_data_gpm, zeropoint_fit, zeropoint_fit_gpm
+    # TODO Shouldn't we return `zeropoint_fitmask` INSTEAD of `zeropoint_data_gpm`? (TPEB, 2/16/23)
+    return zeropoint_data, zeropoint_fitmask, zeropoint_fit, zeropoint_fit_gpm
 
 
 def load_filter_file(filter):
@@ -1466,7 +1626,7 @@ def load_filter_file(filter):
 
     """
 
-    filter_file = os.path.join(data.Paths.filters, 'filter_list.ascii')
+    filter_file = data.Paths.filters / 'filter_list.ascii'
     tbl = table.Table.read(filter_file, format='ascii')
 
     allowed_options = tbl['filter'].data
@@ -1475,7 +1635,7 @@ def load_filter_file(filter):
     if filter not in allowed_options:
         msgs.error("PypeIt is not ready for filter = {}".format(filter))
 
-    trans_file = os.path.join(data.Paths.filters, 'filtercurves.fits')
+    trans_file = data.Paths.filters / 'filtercurves.fits'
     trans = io.fits_open(trans_file)
     wave = trans[filter].data['lam']  # Angstroms
     instr = trans[filter].data['Rlam']  # Am keeping in atmospheric terms

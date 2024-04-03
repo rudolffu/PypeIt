@@ -12,8 +12,6 @@ from IPython import embed
 import numpy as np
 from scipy.io import readsav
 
-from pkg_resources import resource_filename
-
 from astropy.table import Table
 
 from pypeit import msgs
@@ -34,13 +32,15 @@ class HIRESMosaicLookUp:
     Similar to :class:`~pypeit.spectrographs.gemini_gmos.GeminiGMOSMosaicLookUp`
 
     """
+    # Original
     geometry = {
         'MSC01': {'default_shape': (6168, 3990),
-                  'blue_det': {'shift': (-2048.0 - 41.0, 0.0), 'rotation': 0.},
+                  'blue_det': {'shift': (-2048.0 - 41.0, -3.), 'rotation': 0.},
                   'green_det': {'shift': (0., 0.), 'rotation': 0.},
                   'red_det': {'shift': (2048.0 + 53.0, 0.), 'rotation': 0.}},
     }
-
+    # adding -3 to the blue_det shift in the y-direction helps to deal with the gap
+    # in the 2D fit wavelength solution between the blue and green detectors
 
 
 class KECKHIRESSpectrograph(spectrograph.Spectrograph):
@@ -59,7 +59,11 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
     url = 'https://www2.keck.hawaii.edu/inst/hires/'
     pypeline = 'Echelle'
     ech_fixed_format = False
-    supported = True
+    supported = False
+    # TODO before support = True
+    # 1. Implement flat fielding
+    # 2. Test on several different setups
+    # 3. Implement PCA extrapolation into the blue 
 
 
     # TODO: Place holder parameter set taken from X-shooter VIS for now.
@@ -70,7 +74,7 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
 
         Returns:
             :class:`~pypeit.par.pypeitpar.PypeItPar`: Parameters required by
-            all of ``PypeIt`` methods.
+            all of PypeIt methods.
         """
         par = super().default_pypeit_par()
 
@@ -105,6 +109,10 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
         par['calibrations']['slitedges']['overlap'] = True
         par['calibrations']['slitedges']['dlength_range'] = 0.25
 
+        par['calibrations']['slitedges']['add_missed_orders'] = True
+        par['calibrations']['slitedges']['order_width_poly'] = 2
+        par['calibrations']['slitedges']['order_gap_poly'] = 3
+
         # These are the defaults
         par['calibrations']['tilts']['tracethresh'] = 15
         par['calibrations']['tilts']['spat_order'] = 3
@@ -112,25 +120,26 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
 
         # 1D wavelength solution
         par['calibrations']['wavelengths']['lamps'] = ['ThAr']
-        # This is for 1x1 binning. TODO GET BINNING SORTED OUT!!
-        par['calibrations']['wavelengths']['rms_threshold'] = 0.50
-        par['calibrations']['wavelengths']['sigdetect'] = 5.0
-        par['calibrations']['wavelengths']['n_final'] = 4 #[3] + 13 * [4] + [3]
-        # This is for 1x1 binning. Needs to be divided by binning for binned data!!
-        par['calibrations']['wavelengths']['fwhm'] = 8.0
+        par['calibrations']['wavelengths']['rms_thresh_frac_fwhm'] = 0.1
+        par['calibrations']['wavelengths']['sigdetect'] = 5.
+        par['calibrations']['wavelengths']['n_first'] = 3
+        par['calibrations']['wavelengths']['n_final'] = 4
+
+        par['calibrations']['wavelengths']['match_toler'] = 1.5
         # Reidentification parameters
         par['calibrations']['wavelengths']['method'] = 'echelle'
-        # TODO: the arxived solution is for 1x1 binning. It needs to be
-        # generalized for different binning!
-        #par['calibrations']['wavelengths']['reid_arxiv'] = 'vlt_xshooter_vis1x1.fits'
-        par['calibrations']['wavelengths']['cc_thresh'] = 0.50
-        par['calibrations']['wavelengths']['cc_local_thresh'] = 0.50
-#        par['calibrations']['wavelengths']['ech_fix_format'] = True
+        par['calibrations']['wavelengths']['cc_shift_range'] = (-80.,80.)
+        par['calibrations']['wavelengths']['cc_thresh'] = 0.6
+        par['calibrations']['wavelengths']['cc_local_thresh'] = 0.25
+        par['calibrations']['wavelengths']['reid_cont_sub'] = False
+
         # Echelle parameters
         par['calibrations']['wavelengths']['echelle'] = True
-        par['calibrations']['wavelengths']['ech_nspec_coeff'] = 4
-        par['calibrations']['wavelengths']['ech_norder_coeff'] = 4
-        par['calibrations']['wavelengths']['ech_sigrej'] = 3.0
+        par['calibrations']['wavelengths']['ech_nspec_coeff'] = 5
+        par['calibrations']['wavelengths']['ech_norder_coeff'] = 3
+        par['calibrations']['wavelengths']['ech_sigrej'] = 2.0
+        par['calibrations']['wavelengths']['ech_separate_2d'] = True
+        par['calibrations']['wavelengths']['bad_orders_maxfrac'] = 0.5
 
         # Flats
         par['calibrations']['flatfield']['tweak_slits_thresh'] = 0.90
@@ -147,15 +156,61 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
 
         # Sensitivity function parameters
         par['sensfunc']['algorithm'] = 'IR'
-        par['sensfunc']['polyorder'] = 11 #[9, 11, 11, 9, 9, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7]
-        par['sensfunc']['IR']['telgridfile'] = 'TelFit_MaunaKea_3100_26100_R20000.fits'
+        par['sensfunc']['polyorder'] = 5 #[9, 11, 11, 9, 9, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7]
+        par['sensfunc']['IR']['telgridfile'] = 'TellPCA_3000_10500_R120000.fits'
+        par['sensfunc']['IR']['pix_shift_bounds'] = (-40.0,40.0)
+        
+        # Telluric parameters
+        # HIRES is usually oversampled, so the helio shift can be large
+        par['telluric']['pix_shift_bounds'] = (-40.0,40.0)
+        # Similarly, the resolution guess is higher than it should be
+        par['telluric']['resln_frac_bounds'] = (0.25,1.25)
+
+        # Coadding
+        par['coadd1d']['wave_method'] = 'log10'
+
+        return par
+
+    def config_specific_par(self, scifile, inp_par=None):
+        """
+        Modify the PypeIt parameters to hard-wired values used for
+        specific instrument configurations.
+
+        Args:
+            scifile (:obj:`str`):
+                File to use when determining the configuration and how
+                to adjust the input parameters.
+            inp_par (:class:`~pypeit.par.parset.ParSet`, optional):
+                Parameter set used for the full run of PypeIt.  If None,
+                use :func:`default_pypeit_par`.
+
+        Returns:
+            :class:`~pypeit.par.parset.ParSet`: The PypeIt parameter set
+            adjusted for configuration specific parameter values.
+        """
+        par = super().config_specific_par(scifile, inp_par=inp_par)
+
+        headarr = self.get_headarr(scifile)
+
+        bin_spec, bin_spat = parse.parse_binning(self.get_meta_value(headarr, 'binning'))
+
+        # slit edges
+        # NOTE: With add_missed_orders set to True and order_spat_range set to the
+        # default (None), the code will try to add missing orders over the full
+        # range of the detector mosaic!
+        par['calibrations']['slitedges']['order_spat_range'] = [10., 6200./bin_spat]
+
+        # wavelength
+        par['calibrations']['wavelengths']['fwhm'] = 8.0/bin_spec
+
+        # Return
         return par
 
     def init_meta(self):
         """
         Define how metadata are derived from the spectrograph files.
 
-        That is, this associates the ``PypeIt``-specific metadata keywords
+        That is, this associates the PypeIt-specific metadata keywords
         with the instrument-specific header cards using :attr:`meta`.
         """
         self.meta = {}
@@ -175,7 +230,7 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
         self.meta['dispname'] = dict(ext=0, card='XDISPERS')
         self.meta['filter1'] = dict(ext=0, card='FIL1NAME')
         self.meta['echangle'] = dict(ext=0, card='ECHANGL', rtol=1e-3)
-        self.meta['xdangle'] = dict(ext=0, card='XDANGL', rtol=1e-3)
+        self.meta['xdangle'] = dict(ext=0, card='XDANGL', rtol=1e-2)
 #        self.meta['idname'] = dict(ext=0, card='IMAGETYP')
         # NOTE: This is the native keyword.  IMAGETYP is from KOA.
         self.meta['idname'] = dict(ext=0, card='OBSTYPE')
@@ -204,7 +259,6 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
         else:
             msgs.error("Not ready for this compound meta")
 
-
     def configuration_keys(self):
         """
         Return the metadata keys that define a unique instrument
@@ -219,12 +273,31 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
             and used to constuct the :class:`~pypeit.metadata.PypeItMetaData`
             object.
         """
-        return ['filter1', 'echangle', 'xdangle']
+        return ['filter1', 'echangle', 'xdangle', 'binning']
 
+    def raw_header_cards(self):
+        """
+        Return additional raw header cards to be propagated in
+        downstream output files for configuration identification.
+
+        The list of raw data FITS keywords should be those used to populate
+        the :meth:`~pypeit.spectrographs.spectrograph.Spectrograph.configuration_keys`
+        or are used in :meth:`~pypeit.spectrographs.spectrograph.Spectrograph.config_specific_par`
+        for a particular spectrograph, if different from the name of the
+        PypeIt metadata keyword.
+
+        This list is used by :meth:`~pypeit.spectrographs.spectrograph.Spectrograph.subheader_for_spec`
+        to include additional FITS keywords in downstream output files.
+
+        Returns:
+            :obj:`list`: List of keywords from the raw data files that should
+            be propagated in output files.
+        """
+        return ['FIL1NAME', 'ECHANGL', 'XDANGL']
 
     def pypeit_file_keys(self):
         """
-        Define the list of keys to be output into a standard ``PypeIt`` file.
+        Define the list of keys to be output into a standard PypeIt file.
 
         Returns:
             :obj:`list`: The list of keywords in the relevant
@@ -397,7 +470,7 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
         from unbinned images.
 
         The parameters expect the images to be trimmed and oriented to follow
-        the ``PypeIt`` shape convention of ``(nspec,nspat)``.  For returned
+        the PypeIt shape convention of ``(nspec,nspat)``.  For returned
         lists, the length of the list is the same as the number of detectors in
         the mosaic, and they are ordered by the detector number.
 
@@ -476,14 +549,13 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
         Returns:
             :obj:`list`: List of tuples, where each tuple provides the 1-indexed
             detector numbers that can be combined into a mosaic and processed by
-            ``PypeIt``.
+            PypeIt.
         """
         return [(1,2,3)]
 
     @property
     def default_mosaic(self):
         return self.allowed_mosaics[0]
-
 
     def get_detector_par(self, det, hdu=None):
         """
@@ -504,7 +576,7 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
         binning = '1,1' if hdu is None else self.get_meta_value(self.get_headarr(hdu), 'binning')
 
         # Detector 1
-        # TODO -- Fill these in properly for HIRES
+
         detector_dict1 = dict(
             binning         = binning,
             det             = 1,
@@ -513,40 +585,83 @@ class KECKHIRESSpectrograph(spectrograph.Spectrograph):
             specflip        = False,
             spatflip        = False,
             platescale      = 0.135,
-            darkcurr        = 0.0,
+            darkcurr        = 0.0,  # e-/pixel/hour
             saturation      = 65535.,
-            nonlinear       = 0.86,
+            nonlinear       = 0.7, # Website says 0.6, but we'll push it a bit
             mincounts       = -1e10,
             numamplifiers   = 1,
-            # TODO THese are place holders at present. Getting these numbers right requires parsing headers to determine
-            # which readout mode is being used.
-            gain            = np.atleast_1d([1.]),
-            ronoise         = np.atleast_1d([3.]),
+            ronoise         = np.atleast_1d([2.8]),
             )
 
-        # Detector 2. HACK
+        # Detector 2. 
         detector_dict2 = detector_dict1.copy()
         detector_dict2.update(dict(
             det=2,
             dataext=2,
-            gain=np.atleast_1d([1.]),
-            ronoise=np.atleast_1d([3.])
+            ronoise=np.atleast_1d([3.1])
         ))
 
 
-        # Detector 3,. HACK
+        # Detector 3,. 
         detector_dict3 = detector_dict1.copy()
         detector_dict3.update(dict(
             det=3,
             dataext=3,
-            gain=np.atleast_1d([1.]),
-            ronoise=np.atleast_1d([3.])
+            ronoise=np.atleast_1d([3.1])
         ))
 
+        # Set gain 
+        # https://www2.keck.hawaii.edu/inst/hires/instrument_specifications.html
+        if hdu is None or hdu[0].header['CCDGAIN'].strip() == 'low':
+            detector_dict1['gain'] = np.atleast_1d([1.9])
+            detector_dict2['gain'] = np.atleast_1d([2.1])
+            detector_dict3['gain'] = np.atleast_1d([2.1])
+        elif hdu[0].header['CCDGAIN'].strip() == 'high':
+            detector_dict1['gain'] = np.atleast_1d([0.78])
+            detector_dict2['gain'] = np.atleast_1d([0.86])
+            detector_dict3['gain'] = np.atleast_1d([0.84])
+        else:
+            msgs.error("Bad CCDGAIN mode for HIRES")
+            
         # Instantiate
         detector_dicts = [detector_dict1, detector_dict2, detector_dict3]
         return detector_container.DetectorContainer( **detector_dicts[det-1])
 
+    def get_echelle_angle_files(self):
+        """ Pass back the files required
+        to run the echelle method of wavecalib
+
+        Returns:
+            list: List of files
+        """
+        angle_fits_file = 'keck_hires_angle_fits.fits'
+        composite_arc_file = 'keck_hires_composite_arc.fits'
+
+        return [angle_fits_file, composite_arc_file]
+        
+
+    def order_platescale(self, order_vec, binning=None):
+        """
+        Return the platescale for each echelle order.
+
+        This routine is only defined for echelle spectrographs, and it is
+        undefined in the base class.
+
+        Args:
+            order_vec (`numpy.ndarray`_):
+                The vector providing the order numbers.
+            binning (:obj:`str`, optional):
+                The string defining the spectral and spatial binning.
+
+        Returns:
+            `numpy.ndarray`_: An array with the platescale for each order
+            provided by ``order``.
+        """
+        det = self.get_detector_par(1)
+        binspectral, binspatial = parse.parse_binning(binning)
+
+        # Assume no significant variation (which is likely true)
+        return np.ones_like(order_vec)*det.platescale*binspatial
 
 def indexing(itt, postpix, det=None,xbin=1,ybin=1):
     """

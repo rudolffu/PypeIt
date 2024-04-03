@@ -20,7 +20,7 @@ This doc describes the wavelength calibration :ref:`wvcalib-algorithms`, the
 :ref:`wvcalib-byhand` including the :ref:`pypeit_identify` script,
 :ref:`wvcalib-failures`, and more.
 
-See :doc:`master_wvcalib` for a discussion of the
+See :doc:`wvcalib` for a discussion of the
 main outputs and good/bad examples.
 
 If you wish to use your own line lists (*i.e.*, you have reliable
@@ -81,8 +81,9 @@ HgI     2900-12000  28 February 2022
 KrI     4000-10000  3 May 2018
 NeI     5000-12000  3 May 2018
 XeI     4000-12000  3 May 2018
-ZnI     3000-5000   21 December 2016
+ZnI     3000-5000   6 Sep 2023
 ThAr    3000-11000  9 January 2018
+FeAr    3000-9000   6 Sep 2023
 ======  ==========  ================
 
 In the case of the ThAr list, all of the lines are taken from the NIST database,
@@ -186,8 +187,10 @@ with PypeIt.   The basic steps are:
  2. Load the parameters guiding wavelength calibration
  3. Generate the 1D wavelength fits
 
-The code is guided by the :class:`~pypeit.wavecalib.WaveCalib` class, partially described
-by `this notebook <https://github.com/pypeit/pypeit/blob/master/doc/nb/WaveCalib.ipynb>`__.
+The code is guided by the :class:`~pypeit.wavecalib.WaveCalib` class, partially
+described by `this notebook
+<https://github.com/pypeit/pypeit/blob/release/doc/nb/WaveCalib.ipynb>`__
+(BEWARE, this may be out of date).
 
 For the primary step (#3), we have developed several
 algorithms, finding it challenging to have one that satisfies
@@ -257,6 +260,60 @@ observations, long-slit observations where wavelengths
 vary (*e.g.*, grating tilts).  We are likely to implement
 this for echelle observations (*e.g.*, HIRES).
 
+.. _wvcalib-echelle:
+
+Echelle Spectrographs
+=====================
+
+Echelle spectrographs are a special case for wavelength
+solutions, primarily because the orders follow the
+grating equation.
+
+In general, the approach is:
+
+    #. Identify the arc lines in each order
+
+    #. Fit the arc lines in each order to a polynomial, individually
+
+    #. Fit a 2D solution to the lines using the order number as a basis
+
+    #. Reject orders where the RMS of the fit (measured in binned pixels)
+       exceeds a certain threshold set by the user (see :ref:`wvcalib-rms-threshold`)
+
+    #. Attempt to recover the missing orders using the 2D fit and a higher RMS
+       threshold
+
+    #. Refit the 2D solution
+
+One should always inspect the outputs, especially the 2D solution
+(global and orders).  One may then need to modify the ``rms_thresh_frac_fwhm``
+parameter and/or hand-fit a few of the orders to improve the solution.
+
+.. _wvcalib-rms-threshold:
+
+RMS threshold
+-------------
+
+The parameter that controls the RMS threshold is ``rms_thresh_frac_fwhm``, which
+is a fraction of the FWHM. If the parameter ``fwhm_fromlines`` is set to **True**,
+FWHM (in binned pixels) will be computed from the arc lines in each slits,
+otherwise the value set by the parameter ``fwhm`` will be used.
+
+That is, each order must satisfy the following:
+
+.. code-block:: ini
+
+    RMS < rms_thresh_frac_fwhm * FWHM     # FWHM in binned pixels
+
+
+Mosaics
+-------
+
+For echelle spectrographs with multiple detectors *per* camera
+that are mosaiced (e.g. Keck/HIRES), we fit the 2D solutions on a *per* detector
+basis.  Ths is because we have found the mosaic solutions to be
+too difficult to make sufficiently accurate.
+
 .. _wvcalib-byhand:
 
 By-Hand Approach
@@ -267,8 +324,8 @@ Identify
 
 If you would prefer to manually wavelength calibrate, then you can do so with
 the ``pypeit_identify`` GUI. To use this script, you must have successfully
-traced the slit edges (*i.e.*, a :doc:`master_edges` file must exist) and
-generated a :doc:`master_arc` calibration frame.
+traced the slit edges (*i.e.*, a :doc:`edges` file must exist) and
+generated a :doc:`arc` calibration frame.
 
 .. _pypeit_identify:
 
@@ -287,7 +344,7 @@ To launch the GUI, use the following command:
 
 .. code-block:: bash
 
-    $ pypeit_identify MasterArc_A_1_01.fits MasterSlits_A_1_01.fits.gz
+    $ pypeit_identify Arc_A_1_01.fits Slits_A_1_01.fits.gz
 
 basics
 ------

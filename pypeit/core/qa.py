@@ -1,4 +1,7 @@
 """ Module for QA in PypeIt
+
+.. include:: ../include/links.rst
+
 """
 import os
 import datetime
@@ -49,6 +52,8 @@ def set_qa_filename(root, method, det=None, slit=None, prefix=None, out_dir=None
     elif method == 'arc_fit_qa':
 #        outfile = 'QA/PNGs/Arc_1dfit_{:s}_S{:04d}.png'.format(root, slit)
         outfile = 'PNGs/Arc_1dfit_{:s}_S{:04d}.png'.format(root, slit)
+    elif method == 'arc_fwhm_qa':
+        outfile = 'PNGs/Arc_FWHMfit_{:s}_S{:04d}.png'.format(root, slit)
     elif method == 'plot_orderfits_Arc':  # This is root for multiple PNGs
         outfile = 'QA/PNGs/Arc_lines_{:s}_S{:04d}_'.format(root, slit)
     elif method == 'arc_fit2d_global_qa':
@@ -84,6 +89,8 @@ def set_qa_filename(root, method, det=None, slit=None, prefix=None, out_dir=None
         outfile = 'PNGs/{:s}_S{:04d}_spec_flex_sky.png'.format(root, slit)
     elif method == 'spatillum_finecorr':
         outfile = 'PNGs/{:s}_S{:04d}_spatillum_finecorr.png'.format(root, slit)
+    elif method == 'detector_structure':
+        outfile = 'PNGs/{:s}_{:s}_detector_structure.png'.format(root, det)
     else:
         raise IOError("NOT READY FOR THIS QA: {:s}".format(method))
     # Return
@@ -184,11 +191,12 @@ def html_header(title):
     return head
 
 def html_end(f, body, links=None):
-    """ Fill in the HTML file with a proper ending
+    """
+    Fill in the HTML file with a proper ending
 
     Parameters
     ----------
-    f : file
+    f : `io.TextIOWrapper`_
     body : str
     links : str, optional
 
@@ -218,8 +226,10 @@ def html_init(f, title):
     Initialize the HTML file
 
     Args:
-        f (fileobj): file object to write to
-        title (str): title
+        f (`io.TextIOWrapper`_):
+            file object to write to
+        title (str):
+            title
 
     Returns:
         str: Initial HTML text incluing the header and links
@@ -233,11 +243,11 @@ def html_init(f, title):
 
 
 def html_mf_pngs(idval):
-    """ Generate HTML for MasterFrame PNGs
+    """ Generate HTML for QA PNGs
 
     Args:
         idval: str
-          Master key of the calibration set
+            Key identifier of the calibration set
 
     Returns:
         tuple: 
@@ -379,9 +389,9 @@ def gen_qa_dir(qa_path):
     if not os.path.exists(qa_path):
         os.makedirs(qa_path)
 
-
+# TODO: Need to revisit this...
 def gen_mf_html(pypeit_file, qa_path):
-    """ Generate the HTML for a MasterFrame set
+    """ Generate the HTML for QA
 
     Args:
         pypeit_file (str):
@@ -412,7 +422,7 @@ def gen_mf_html(pypeit_file, qa_path):
     body = ''
     with open(MF_filename,'w') as f:
         # Start
-        links = html_init(f, 'QA  Setup {:s}: MasterFrame files'.format(setup))
+        links = html_init(f, 'QA Setup {:s}: Calibration files'.format(setup))
         # Loop on calib_sets
         for cbset in cbsets:
             for det in dets:
@@ -469,11 +479,14 @@ def gen_exp_html():
 
 
 def close_qa(pypeit_file, qa_path):
-    """Tie off QA under a crash
+    """
+    Tie off QA under a crash
 
     Args:
-        pypeit_file (_type_): _description_
-        qa_path (_type_): _description_
+        pypeit_file (str):
+            PypeIt file name
+        qa_path (str):
+            Path to QA directory
     """
     if pypeit_file is None:
         return

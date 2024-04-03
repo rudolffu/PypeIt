@@ -4,6 +4,7 @@ Launch the identify GUI tool.
 .. include common links, assuming primary doc root is up one directory
 .. include:: ../include/links.rst
 """
+import argparse
 from IPython import embed
 
 from pypeit.scripts import scriptbase
@@ -13,10 +14,9 @@ class Identify(scriptbase.ScriptBase):
     @classmethod
     def get_parser(cls, width=None):
         parser = super().get_parser(description='Launch PypeIt identify tool, display extracted '
-                                                'MasterArc, and load linelist.'
-                                                'Run above the Masters/ folder.', width=width)
-        parser.add_argument('arc_file', type=str, default=None, help='PypeIt MasterArc file')
-        parser.add_argument('slits_file', type=str, default=None, help='PypeIt MasterSlits file')
+                                                'Arc, and load linelist.', width=width)
+        parser.add_argument('arc_file', type=str, default=None, help='PypeIt Arc file')
+        parser.add_argument('slits_file', type=str, default=None, help='PypeIt Slits file')
         parser.add_argument("--lamps", type=str,
                             help="Comma separated list of calibration lamps (no spaces)")
         parser.add_argument('-s', '--solution', default=False, action='store_true',
@@ -32,13 +32,18 @@ class Identify(scriptbase.ScriptBase):
         parser.add_argument("--pixtol", type=float, default=0.1,
                             help="Pixel tolerance for Auto IDs")
         parser.add_argument('--test', default=False, action='store_true',
-                            help="Testing functionality, do not show plots")
+                            help=argparse.SUPPRESS)
         parser.add_argument("--linear", default=False, action="store_true",
                             help="Show the spectrum in linear (rather than log) scale")
         parser.add_argument('--force_save', default=False, action='store_true',
                             help="Save the solutions, despite the RMS")
         parser.add_argument('--rescale_resid', default=False, action='store_true',
                             help="Rescale the residual plot to include all points?")
+        parser.add_argument('-v', '--verbosity', type=int, default=1,
+                            help='Verbosity level between 0 [none] and 2 [all]. Default: 1. '
+                                 'Level 2 writes a log with filename identify_YYYYMMDD-HHMM.log')
+        parser.add_argument('--try_old', default=False, action='store_true',
+                            help='Attempt to load old datamodel versions.  A crash may ensue..')
         return parser
 
     @staticmethod
@@ -49,16 +54,19 @@ class Identify(scriptbase.ScriptBase):
         import numpy as np
         
         from pypeit import msgs
-        from pypeit import masterframe
         from pypeit.spectrographs.util import load_spectrograph
         from pypeit.core.gui.identify import Identify
-        from pypeit.core.wavecal import waveio
         from pypeit.wavecalib import BuildWaveCalib, WaveCalib
         from pypeit import slittrace
         from pypeit.images.buildimage import ArcImage
 
-        # Load the MasterArc file
-        msarc = ArcImage.from_file(args.arc_file)
+        chk_version = not args.try_old
+
+        # Set the verbosity, and create a logfile if verbosity == 2
+        msgs.set_logfile_and_verbosity('identify', args.verbosity)
+
+        # Load the Arc file
+        msarc = ArcImage.from_file(args.arc_file, chk_version=chk_version)
 
         # Load the spectrograph
         spec = load_spectrograph(msarc.PYP_SPEC)
@@ -74,21 +82,18 @@ class Identify(scriptbase.ScriptBase):
         par['lamps'] = lamps
 
         # Load the slits
-        slits = slittrace.SlitTraceSet.from_file(args.slits_file)
+        slits = slittrace.SlitTraceSet.from_file(args.slits_file, chk_version=chk_version)
         # Reset the mask
         slits.mask = slits.mask_init
 
         # Check if a solution exists
-        solnname = masterframe.construct_file_name(WaveCalib, msarc.master_key,
-                                                   master_dir=msarc.master_dir)
-        # wv_calib = waveio.load_wavelength_calibration(solnname) \
-        wv_calib = WaveCalib.from_file(solnname) \
-            if os.path.exists(solnname) and args.solution else None
+        solnname = WaveCalib.construct_file_name(msarc.calib_key, calib_dir=msarc.calib_dir)
+        wv_calib = WaveCalib.from_file(solnname, chk_version=chk_version) \
+                        if os.path.exists(solnname) and args.solution else None
 
-        # Load the MasterFrame (if it exists and is desired).  Bad-pixel mask
-        # set to any flagged pixel in MasterArc.
-        wavecal = BuildWaveCalib(msarc, slits, spec, par, lamps, binspectral=slits.binspec,
-                                 det=args.det, master_key=msarc.master_key,
+        # Load the calibration frame (if it exists and is desired).  Bad-pixel mask
+        # set to any flagged pixel in Arc.
+        wavecal = BuildWaveCalib(msarc, slits, spec, par, lamps, det=args.det,
                                  msbpm=msarc.select_flag())
         arccen, arc_maskslit = wavecal.extract_arcs(slitIDs=[args.slit])
 
@@ -119,10 +124,12 @@ class Identify(scriptbase.ScriptBase):
         if 'WaveFit' in arcfitter._fitdict.keys():
             waveCalib = WaveCalib(nslits=1, wv_fits=np.atleast_1d(arcfitter._fitdict['WaveFit']),
                                   arc_spectra=np.atleast_2d(arcfitter.specdata).T,
-                                  spat_ids=np.atleast_1d(int(arcfitter._spatid)), PYP_SPEC=msarc.PYP_SPEC,
-                                  lamps=','.join(lamps))
+                                  spat_ids=np.atleast_1d(int(arcfitter._spatid)),
+                                  PYP_SPEC=msarc.PYP_SPEC, lamps=','.join(lamps))
         else:
             waveCalib = None
+
+        waveCalib.copy_calib_internals(msarc)
 
         # Ask the user if they wish to store the result in PypeIt calibrations
         arcfitter.store_solution(final_fit, slits.binspec,

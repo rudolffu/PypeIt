@@ -2,15 +2,16 @@
 
     $ pypeit_skysub_regions -h
     usage: pypeit_skysub_regions [-h] [--det DET] [-o] [-i] [-f] [-s] [-v VERBOSITY]
+                                 [--try_old]
                                  file
     
-    Display a Raw science image and interactively define the sky regions using a
-    GUI. Run in the same folder as your .pypeit file
+    Display a spec2d frame and interactively define the sky regions using a GUI. Run
+    in the same folder as your .pypeit file
     
     positional arguments:
-      file                  PypeIt file
+      file                  spec2d file
     
-    optional arguments:
+    options:
       -h, --help            show this help message and exit
       --det DET             Detector (default: 1)
       -o, --overwrite       Overwrite any existing files/directories (default:
@@ -22,4 +23,6 @@
                             Verbosity level between 0 [none] and 2 [all]. Default:
                             1. Level 2 writes a log with filename
                             skysub_regions_YYYYMMDD-HHMM.log (default: 1)
+      --try_old             Attempt to load old datamodel versions. A crash may
+                            ensue.. (default: False)
     

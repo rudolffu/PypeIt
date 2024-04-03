@@ -1,7 +1,9 @@
 """ Module for I/O in arclines
+
+.. include:: ../include/links.rst
+
 """
-import glob
-import os
+import pathlib
 
 import astropy.table
 import linetools.utils
@@ -15,22 +17,23 @@ from IPython import embed
 
 
 # TODO -- Move this to the WaveCalib object
-def load_wavelength_calibration(filename):
+def load_wavelength_calibration(filename: pathlib.Path) -> dict:
     """
     Load the wavelength calibration data from a file.
 
     Args:
-        filename (:obj:`str`):
+        filename (:obj:`pathlib.Path`):
             Name of the json file.
 
     Returns:
         :obj:`dict`: Returns the wavelength calibration dictionary.
         Lists read from the json file are returnes as numpy arrays.
     """
-    if not os.path.isfile(filename):
+    if not filename.is_file():
         msgs.error(f"File does not exist: {filename}")
 
-    wv_calib = linetools.utils.loadjson(filename)
+    # Force any possible pathlib.Path object to string before `loadjson`
+    wv_calib = linetools.utils.loadjson(str(filename))
 
     # Recast a few items as arrays
     for key in wv_calib.keys():
@@ -47,30 +50,31 @@ def load_wavelength_calibration(filename):
     return wv_calib
 
 
-def load_template(arxiv_file, det, wvrng=None):
+def load_template(arxiv_file:str, det:int, wvrng:list=None)->tuple[np.ndarray,np.ndarray,int]:
     """
     Load a full template file from disk
 
-    Args:
-        arxiv_file: str
-        det: int
-        wvrng (list, optional):
-            min, max wavelength range for the arxiv
+    Parameters
+    ----------
+    arxiv_file : str
+        File with archive spectrum
+    det : int
+        Detector number
+    wvrng : list, optional
+        min, max wavelength range for the arxiv
 
-
-    Returns:
-        wave: ndarray
-        flux: ndarray
-        binning: int, Of the template arc spectrum
+    Returns
+    -------
+    wave : ndarray
+        Wavelength vector
+    flux : ndarray
+        Flux vector
+    binning : int
+        binning of the template arc spectrum
 
     """
-    # Path already included?
-    if os.path.basename(arxiv_file) == arxiv_file:
-        calibfile, _ = data.get_reid_arxiv_filepath(arxiv_file)
-    else:
-        calibfile = arxiv_file
-    # Read me
-    tbl = astropy.table.Table.read(calibfile, format='fits')
+    calibfile, fmt = data.get_reid_arxiv_filepath(arxiv_file)
+    tbl = astropy.table.Table.read(calibfile, format=fmt)
     # Parse on detector?
     if 'det' in tbl.keys():
         idx = np.where(tbl['det'].data & 2**det)[0]
@@ -148,7 +152,7 @@ def load_line_list(line_file, use_ion=False):
 
     Returns
     -------
-    line_list : Table
+    line_list : `astropy.table.Table`_
 
     """
     line_file = data.get_linelist_filepath(f'{line_file}_lines.dat') if use_ion else \
@@ -156,7 +160,7 @@ def load_line_list(line_file, use_ion=False):
     return astropy.table.Table.read(line_file, format='ascii.fixed_width', comment='#')
 
 
-def load_line_lists(lamps, unknown=False, all=False, restrict_on_instr=None):
+def load_line_lists(lamps, all=False, include_unknown:bool=False, restrict_on_instr=None):
     """
     Loads a series of line list files
 
@@ -165,20 +169,24 @@ def load_line_lists(lamps, unknown=False, all=False, restrict_on_instr=None):
     lamps : list
         List of arc lamps to be used for wavelength calibration.
         E.g., ['ArI','NeI','KrI','XeI']
-    unknown : bool, optional
-        Load the unknown list
     restrict_on_instr : str, optional
         Restrict according to the input spectrograph
+    all : bool, optional
+        Load all line lists, independent of the input lamps (not recommended)
+    include_unknown : bool, optional
+        If True, the tot_line_list includes the unknown lines
 
     Returns
     -------
-    line_list : Table
+    tot_line_list : astropy Table of line lists (including unknown lines, if requested)
+    line_list : astropy Table of line lists
+    unkn_lines : astropy Table of unknown lines
 
     """
     # All?
     if all:
         # Search both in the package directory and the PypeIt cache
-        line_files = glob.glob(os.path.join(data.Paths.linelist, '*_lines.dat'))
+        line_files = list(data.Paths.linelist.glob('*_lines.dat'))
         line_files.append(data.search_cache('_lines.dat'))
         lamps = []
         for line_file in line_files:
@@ -194,23 +202,28 @@ def load_line_lists(lamps, unknown=False, all=False, restrict_on_instr=None):
     # Stack
     if len(lists) == 0:
         return None
-    line_lists = astropy.table.vstack(lists, join_type='exact')
+    line_lists_all = astropy.table.vstack(lists, join_type='exact')
 
     # Restrict on the spectrograph?
     if restrict_on_instr is not None:
         instr_dict = defs.instruments()
-        gdI = (line_lists['Instr'] & instr_dict[restrict_on_instr]) > 0
-        line_lists = line_lists[gdI]
+        gdI = (line_lists_all['Instr'] & instr_dict[restrict_on_instr]) > 0
+        line_lists_all = line_lists_all[gdI]
 
-    # Unknown
-    if unknown:
+    # Load Unknowns
+    if 'ThAr' in lamps:
+        line_lists = line_lists_all[line_lists_all['ion'] != 'UNKNWN']
+        unkn_lines = line_lists_all[line_lists_all['ion'] == 'UNKNWN']
+    else:
+        line_lists = line_lists_all
         unkn_lines = load_unknown_list(lamps)
-        unkn_lines.remove_column('line_flag')  # may wish to have this info
-        # Stack
-        line_lists = astropy.table.vstack([line_lists, unkn_lines])
+        #unkn_lines.remove_column('line_flag')  # may wish to have this info
+
+    # Stack?
+    tot_line_list = astropy.table.vstack([line_lists, unkn_lines]) if include_unknown else line_lists_all
 
     # Return
-    return line_lists
+    return tot_line_list, line_lists, unkn_lines
 
 
 def load_tree(polygon=4, numsearch=20):
@@ -279,7 +292,7 @@ def load_unknown_list(lines, unknwn_file=None, all=False):
 
     Returns
     -------
-    unknwn_lines : Table
+    unknwn_lines : `astropy.table.Table`_
 
     """
     line_dict = defs.lines()
@@ -294,6 +307,10 @@ def load_unknown_list(lines, unknwn_file=None, all=False):
     # Otherwise
     msk = np.zeros(len(line_list), dtype=bool)
     for line in lines:
+        # Skip if the lines is not even in the line list
+        if line not in line_dict.keys():
+            continue
+        # Else consider masking
         line_flag = line_dict[line]
         match = line_list['line_flag'] % (2*line_flag) >= line_flag
         msk[match] = True
