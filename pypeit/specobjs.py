@@ -244,15 +244,8 @@ class SpecObjs:
             detector[iorddet] = self[iorddet].DET
             if self[0].PYPELINE == 'Echelle':
                 ech_orders[iorddet] = self[iorddet].ECH_ORDER
-<<<<<<< Updated upstream
-            flux[:, iorddet] = getattr(self, flux_key)[iorddet]
-            flux_ivar[:, iorddet] = getattr(self, flux_key+'_IVAR')[iorddet] #OPT_FLAM_IVAR
-=======
             flux[:, iorddet] = getattr(self[iorddet], flux_key)
             flux_ivar[:, iorddet] = getattr(self[iorddet], flux_key+'_IVAR') #OPT_FLAM_IVAR
-            trace_spat[:, iorddet] = self[iorddet].TRACE_SPAT
-            trace_spec[:, iorddet] = self[iorddet].trace_spec
->>>>>>> Stashed changes
 
         # Populate meta data
         spectrograph = load_spectrograph(self.header['PYP_SPEC'])
