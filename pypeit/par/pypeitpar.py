@@ -995,9 +995,17 @@ class Coadd1DPar(ParSet):
     see :ref:`parameters`.
     """
     def __init__(self, ex_value=None, flux_value=None, nmaskedge=None,
+<<<<<<< Updated upstream
                  sn_smooth_npix=None, wave_method=None, dv=None, wave_grid_min=None, wave_grid_max=None, spec_samp_fact=None, ref_percentile=None, maxiter_scale=None,
                  sigrej_scale=None, scale_method=None, sn_min_medscale=None, sn_min_polyscale=None, maxiter_reject=None,
                  lower=None, upper=None, maxrej=None, sn_clip=None, nbest=None, sensfuncfile=None, coaddfile=None,
+=======
+                 sn_smooth_npix=None, sigrej_exp=None, wave_method=None, dv=None, dwave=None, dloglam=None,
+                 wave_grid_min=None, wave_grid_max=None, spec_samp_fact=None, ref_percentile=None, maxiter_scale=None,
+                 sigrej_scale=None, scale_method=None, sn_min_medscale=None, sn_min_polyscale=None,
+                 weight_method=None, maxiter_reject=None,
+                 lower=None, upper=None, maxrej=None, sn_clip=None, nbests=None, coaddfile=None, sensfuncfile=None,
+>>>>>>> Stashed changes
                  mag_type=None, filter=None, filter_mag=None, filter_mask=None):
 
         # Grab the parameter names and values from the function
@@ -1163,6 +1171,10 @@ class Coadd1DPar(ParSet):
         defaults['coaddfile'] = None
         dtypes['coaddfile'] = str
         descr['coaddfile'] = 'Output filename'
+        
+        defaults['sensfuncfile'] = None
+        dtypes['sensfuncfile'] = str
+        descr['sensfuncfile'] = 'Sensitivity function file'
 
         # Instantiate the parameter set
         super(Coadd1DPar, self).__init__(list(pars.keys()),
@@ -1177,8 +1189,13 @@ class Coadd1DPar(ParSet):
         k = np.array([*cfg.keys()])
         parkeys = ['ex_value', 'flux_value', 'nmaskedge', 'sn_smooth_npix', 'wave_method', 'dv', 'wave_grid_min', 'wave_grid_max',
                    'spec_samp_fact', 'ref_percentile', 'maxiter_scale', 'sigrej_scale', 'scale_method',
+<<<<<<< Updated upstream
                    'sn_min_medscale', 'sn_min_polyscale', 'maxiter_reject', 'lower', 'upper',
                    'maxrej', 'sn_clip', 'nbest', 'sensfuncfile', 'coaddfile',
+=======
+                   'sn_min_medscale', 'sn_min_polyscale', 'weight_method', 'maxiter_reject', 'lower', 'upper',
+                   'maxrej', 'sn_clip', 'nbests', 'coaddfile', 'sensfuncfile',
+>>>>>>> Stashed changes
                    'filter', 'mag_type', 'filter_mag', 'filter_mask']
 
         badkeys = np.array([pk not in parkeys for pk in k])

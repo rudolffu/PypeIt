@@ -202,10 +202,10 @@ class SpecObjs:
         flux_key = '{}_{}'.format(extract_type, flux_attr)
         wave_key = '{}_WAVE'.format(extract_type)
         # Test
-        if getattr(self, flux_key)[0] is None:
+        if getattr(self[0], flux_key) is None:
             msgs.error("Flux not available for {}.  Try the other ".format(flux_key))
         #
-        nspec = getattr(self, flux_key)[0].size
+        nspec = getattr(self[0], flux_key).size
         # Allocate arrays and unpack spectrum
         wave = np.zeros((nspec, norddet))
         flux = np.zeros((nspec, norddet))
@@ -216,13 +216,20 @@ class SpecObjs:
 
         # TODO make the extraction that is desired OPT vs BOX an optional input variable.
         for iorddet in range(norddet):
-            wave[:, iorddet] = getattr(self, wave_key)[iorddet]
-            flux_gpm[:, iorddet] = getattr(self, '{}_MASK'.format(extract_type))[iorddet]
+            wave[:, iorddet] = getattr(self[iorddet], wave_key)
+            flux_gpm[:, iorddet] = getattr(self[iorddet], '{}_MASK'.format(extract_type))
             detector[iorddet] = self[iorddet].DET
             if self[0].PYPELINE == 'Echelle':
                 ech_orders[iorddet] = self[iorddet].ECH_ORDER
+<<<<<<< Updated upstream
             flux[:, iorddet] = getattr(self, flux_key)[iorddet]
             flux_ivar[:, iorddet] = getattr(self, flux_key+'_IVAR')[iorddet] #OPT_FLAM_IVAR
+=======
+            flux[:, iorddet] = getattr(self[iorddet], flux_key)
+            flux_ivar[:, iorddet] = getattr(self[iorddet], flux_key+'_IVAR') #OPT_FLAM_IVAR
+            trace_spat[:, iorddet] = self[iorddet].TRACE_SPAT
+            trace_spec[:, iorddet] = self[iorddet].trace_spec
+>>>>>>> Stashed changes
 
         # Populate meta data
         spectrograph = load_spectrograph(self.header['PYP_SPEC'])
