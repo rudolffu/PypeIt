@@ -24,6 +24,7 @@ class P200NGPSSpectrograph(spectrograph.Spectrograph):
     """
     ndet = 1 
     telescope = telescopes.P200TelescopePar()
+    camera = 'NGPS_X'  # Must include camera
 
     def init_meta(self):
         """
