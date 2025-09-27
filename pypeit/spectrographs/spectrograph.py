@@ -1173,7 +1173,8 @@ class Spectrograph:
             msgs.error(f'Provided det must have type tuple or integer, not {type(det)}.')
         return 1, (det,)
 
-    def get_rawimage(self, raw_file, det, sec_includes_binning=False):
+    def get_rawimage(self, raw_file, det, sec_includes_binning=False,
+                     data_ext:int=None):
         """
         Read raw spectrograph image files and return data and relevant metadata
         needed for image processing.
@@ -1199,6 +1200,9 @@ class Spectrograph:
             *include* the on-chip binning automatically when the image is
             written, this flag should be set to true so that this reader returns
             the correct image sections.
+        data_ext : :obj:`int`, optional
+            If provided, the extension to read.  If None, the extension is
+            read from the detector parameters.
 
         Returns
         -------
@@ -1268,9 +1272,10 @@ class Spectrograph:
         rawdatasec_img = [None]*nimg
         oscansec_img = [None]*nimg
         for i in range(nimg):
+            this_ext = detectors[i]['dataext'] if data_ext is None else data_ext
 
             # Raw image
-            raw_img[i] = hdu[detectors[i]['dataext']].data.astype(float)
+            raw_img[i] = hdu[this_ext].data.astype(float)
             # Raw data from some spectrograph (i.e. FLAMINGOS2) have an addition
             # extention, so I add the following two lines. It's easier to change
             # here than writing another get_rawimage function in the
@@ -1279,7 +1284,7 @@ class Spectrograph:
             if raw_img[i].ndim != 2:
                 raw_img[i] = np.squeeze(raw_img[i])
             if raw_img[i].ndim != 2:
-                msgs.error(f"Raw images must be 2D; check extension {detectors[i]['dataext']} "
+                msgs.error(f"Raw images must be 2D; check extension {this_ext} "
                            f"of {raw_file}.")
 
             for section in ['datasec', 'oscansec']:

@@ -149,17 +149,6 @@ class P200NGPSSpectrograph(spectrograph.Spectrograph):
         msgs.warn('Cannot determine if frames are of type {0}.'.format(ftype))
         return np.zeros(len(fitstbl), dtype=bool)
 
-
-class P200NGPSSpectrograph_r(P200NGPSSpectrograph):
-    """
-    Child to handle P200/NGPS r-Channel specific code
-    """
-    name = 'p200_ngps_r'
-    camera = 'NGPS_r'
-    header_name = 'NGPS_r'
-    supported = True
-    comment = 'r-Channel'
-
     def get_rawimage(self, raw_file, det):
         """
         Read raw spectrograph image files and return data and relevant metadata
@@ -172,9 +161,25 @@ class P200NGPSSpectrograph_r(P200NGPSSpectrograph):
         sets ``sec_includes_binning`` to True.  See the base-class function for
         the detailed descriptions of the input parameters and returned objects.
         """
+        # Find the extension
+        hdul = fits.open(raw_file)
+        names = [hdu.name for hdu in hdul]
+        hdu_ext = names.index(self.camera[-1].upper())
 
-        return super().get_rawimage(raw_file, det=1, sec_includes_binning=True)
+        # Pull image from detector 2
+        return super().get_rawimage(raw_file, det=1, sec_includes_binning=True,
+                                    data_ext=hdu_ext)
     
+
+class P200NGPSSpectrograph_r(P200NGPSSpectrograph):
+    """
+    Child to handle P200/NGPS r-Channel specific code
+    """
+    name = 'p200_ngps_r'
+    camera = 'NGPS_r'
+    header_name = 'NGPS_r'
+    supported = True
+    comment = 'r-Channel'
 
 
     def compound_meta(self, headarr: List[fits.Header], meta_key: str):
@@ -330,22 +335,6 @@ class P200NGPSSpectrograph_i(P200NGPSSpectrograph):
     comment = 'i-Channel'
 
 
-    def get_rawimage(self, raw_file, det):
-        """
-        Read raw spectrograph image files and return data and relevant metadata
-        needed for image processing.
-
-        For P200/NGPS, the ``DATASEC`` and ``OSCANSEC`` regions are read
-        directly from the file header and are automatically adjusted to account
-        for the on-chip binning.  This is a simple wrapper for
-        :func:`pypeit.spectrographs.spectrograph.Spectrograph.get_rawimage` that
-        sets ``sec_includes_binning`` to True.  See the base-class function for
-        the detailed descriptions of the input parameters and returned objects.
-        """
-
-        # Pull image from detector 2
-        return super().get_rawimage(raw_file, det=2, sec_includes_binning=True)
-    
     def compound_meta(self, headarr: List[fits.Header], meta_key: str):
         """
         Methods to generate metadata requiring interpretation of the header
@@ -416,10 +405,10 @@ class P200NGPSSpectrograph_i(P200NGPSSpectrograph):
             oscansec = np.atleast_1d(parse.flip_fits_slice(hdu[2].header['BIASSEC']))
 
         # Detector 2 (i Channel)
-        detector_dict2 = dict(
+        detector_dicti = dict(
             binning         = binning,
             det             = 1, # All i channel images assigned to extension 2 ###################
-            dataext         = 2, # All i channel images assigned to extension 2
+            dataext         = None, # The extension number is not stable
             specaxis        = 1,
             specflip        = False, 
             spatflip        = False, 
@@ -435,7 +424,7 @@ class P200NGPSSpectrograph_i(P200NGPSSpectrograph):
             oscansec        = oscansec,
         )
 
-        return detector_container.DetectorContainer(**detector_dict2)
+        return detector_container.DetectorContainer(**detector_dicti)
 
     @classmethod
     def default_pypeit_par(cls):
