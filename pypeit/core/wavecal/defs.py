@@ -60,6 +60,7 @@ class LinesBitMask(BitMask):
             ('ArII', 'Comment'),
             ('ThI', 'Comment'),
             ('ThII', 'Comment'),
+            ('ThIII', 'Comment'),
             #('OH_XSHOOTER', 'Comment'),
             #('OH_GNIRS', 'Comment'),
             #('OH_NIRES', 'Comment'),
